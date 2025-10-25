@@ -195,7 +195,7 @@ function UpdateMovesName(moves)
         </tr>`;
     }
 
-    document.getElementById("MoveNames").innerHTML = document.getElementById("MoveNames").innerHTML + html;
+    document.getElementById("MoveNames").innerHTML = html;
 }
 
 
@@ -208,7 +208,7 @@ function UpdateIntval() {
     {
         const nextTurn = (Moves.length % 2 === 0) ? startColor : (startColor === "r" ? "y" : "r");
         const best = getBestMove(Moves, nextTurn, 8);
-        document.getElementById("MoveNames").innerHTML = ""/*`<tr>
+        // document.getElementById("MoveNames").innerHTML = ""/*`<tr>
         //     <td>${0}</td>
         //     <td>${best}</td>
         //     <td>C2</td>
