@@ -115,8 +115,15 @@ function play(move) {
 }
 function undo()
 {
-    Moves.pop();
-    Moves.pop();
+    console.log(movesCount);
+    if(movesCount >= 2)
+    {
+        Moves.pop();
+        Moves.pop();
+        movesCount -= 2 ;
+        UpdateGameBoard(Moves);
+        UpdateMovesName(Moves);
+    }
 }
 function UpdateGameBoard(moves)
 {
@@ -201,7 +208,7 @@ function UpdateIntval() {
     {
         const nextTurn = (Moves.length % 2 === 0) ? startColor : (startColor === "r" ? "y" : "r");
         const best = getBestMove(Moves, nextTurn, 8);
-        // document.getElementById("MoveNames").innerHTML = ""/*`<tr>
+        document.getElementById("MoveNames").innerHTML = ""/*`<tr>
         //     <td>${0}</td>
         //     <td>${best}</td>
         //     <td>C2</td>
