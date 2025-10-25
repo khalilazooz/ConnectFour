@@ -94,12 +94,28 @@ function CreateBoardFromMoves(Moves)
     });
     return list;
 }
-function play(move)
-{
-    Moves.push(move);
+function play(move) {
+  const colNum = Number(move.replace("C", ""));
+  if (isNaN(colNum) || colNum < 1 || colNum > boardColumns) {
+    console.warn("Invalid move:", move);
+    return; // ❌ Invalid column name
+  }
+
+  // Build current board state
+  const columns = makeColumnsFromMovesPlain(Moves);
+
+  // Check if column is full
+  if (columns[colNum - 1].length >= 6) {
+    console.warn("Column full:", move);
+    return; // ❌ Cannot play in full column
+  }
+
+  // ✅ Valid move
+  Moves.push(move);
 }
 function undo()
 {
+    Moves.pop();
     Moves.pop();
 }
 function UpdateGameBoard(moves)
