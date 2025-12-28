@@ -195,9 +195,15 @@
                                 <button @click="openRequestModal(req)" class="bg-slate-100 text-slate-600 p-2 sm:p-3 rounded-xl hover:bg-blue-100 hover:text-blue-600 transition"><i data-lucide="edit" class="w-4 h-4 sm:w-5 sm:h-5"></i></button>
                                 <button @click="handleDeleteRequest(req.id, req)" class="bg-slate-100 text-slate-600 p-2 sm:p-3 rounded-xl hover:bg-red-100 hover:text-red-600 transition"><i data-lucide="trash" class="w-4 h-4 sm:w-5 sm:h-5"></i></button>
                             </template>
-                            <button v-if="role === 'Admin' && req.status === 'pending'" @click="openResolveModal(req)" class="bg-blue-600 text-white px-4 py-2 sm:px-6 sm:py-3 rounded-xl hover:bg-blue-700 transition flex items-center gap-2 font-bold shadow-md text-xs sm:text-sm flex-1 sm:flex-initial justify-center">
-                                <i data-lucide="camera" class="w-4 h-4 sm:w-5 sm:h-5"></i> حل وتوثيق
-                            </button>
+                            <template v-if="role === 'Admin' && req.status === 'pending'">
+                                <button @click="openPaymentApp(req)" class="bg-emerald-600 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl hover:bg-emerald-700 transition flex items-center gap-2 font-bold shadow-md text-xs sm:text-sm">
+                                    <i data-lucide="smartphone" class="w-4 h-4 sm:w-5 sm:h-5"></i> 
+                                    <span>فتح {{ req.accountType === 'Insta' ? 'إنستا باي' : 'المحفظة' }}</span>
+                                </button>
+                                <button @click="openResolveModal(req)" class="bg-blue-600 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl hover:bg-blue-700 transition flex items-center gap-2 font-bold shadow-md text-xs sm:text-sm">
+                                    <i data-lucide="camera" class="w-4 h-4 sm:w-5 sm:h-5"></i> حل وتوثيق
+                                </button>
+                            </template>
                         </div>
                     </div>
                 </div>
@@ -318,7 +324,7 @@ const { createApp, ref, onMounted, computed, nextTick } = Vue;
 
 createApp({
     setup() {
-        const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com';
+        const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/test';
         const OCR_API_KEY = 'helloworld'; 
 
         const role = ref('User');
@@ -511,6 +517,50 @@ createApp({
             nextTick(() => lucide.createIcons());
         };
 
+        const openPaymentApp = (req) => {
+            const phoneNumber = req.teacherNumber.replace(/\s/g, '');
+            
+            if (req.accountType === 'Insta') {
+                // محاولة فتح تطبيق InstaPay
+                // يمكن استخدام deep link إذا كان متاحاً
+                const instaPayUrl = `instapay://send?phone=${phoneNumber}&amount=${req.value}`;
+                const fallbackUrl = `https://instapay.com.eg`; // URL احتياطي
+                
+                // محاولة فتح التطبيق
+                const link = document.createElement('a');
+                link.href = instaPayUrl;
+                link.target = '_blank';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // إذا فشل فتح التطبيق، عرض رسالة مع الرقم
+                setTimeout(() => {
+                    if (confirm(`فتح تطبيق إنستا باي؟\n\nالرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nانسخ الرقم للحافظة؟`)) {
+                        navigator.clipboard.writeText(phoneNumber).then(() => {
+                            alert(`✅ تم نسخ الرقم: ${phoneNumber}\n\nافتح تطبيق إنستا باي يدوياً والصق الرقم`);
+                        }).catch(() => {
+                            alert(`الرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه`);
+                        });
+                    }
+                }, 500);
+                
+            } else {
+                // فتح تطبيق المحفظة (Vodafone Cash / Orange Cash / etc)
+                const walletUrl = `tel:${phoneNumber}`;
+                
+                if (confirm(`فتح تطبيق المحفظة؟\n\nالرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nهل تريد نسخ الرقم للحافظة؟`)) {
+                    navigator.clipboard.writeText(phoneNumber).then(() => {
+                        alert(`✅ تم نسخ الرقم: ${phoneNumber}\n\nافتح تطبيق المحفظة الإلكترونية يدوياً`);
+                    }).catch(() => {
+                        alert(`الرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه`);
+                    });
+                }
+            }
+            
+            addLog('فتح تطبيق الدفع', `محاولة فتح ${req.accountType === 'Insta' ? 'إنستا باي' : 'المحفظة'} للمعلم ${req.teacherName} - ${phoneNumber}`);
+        };
+
         const openResolveModal = (req) => { 
             activeReqToResolve.value = req; 
             showResolveModal.value = true; 
@@ -638,7 +688,7 @@ createApp({
             handleDeposit, openEditBalance, handleUpdateBalance, toggleLogs, shareBalance,
             openRequestModal, closeRequestModal, handleCreateRequest, handleDeleteRequest,
             openResolveModal, closeResolveModal, handleImageSelection, processOCRAndResolve,
-            isFavorite, toggleFavorite, removeFavorite, createFromFavorite,
+            isFavorite, toggleFavorite, removeFavorite, createFromFavorite, openPaymentApp,
             sortedLogs, filteredRequests,
             formatDate: (ts) => new Date(ts).toLocaleString('ar-EG')
         }
