@@ -809,10 +809,10 @@
 
     <script>
         // Firebase REST API URLs
-        const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/MoneyCalculator.json';
-        const FIREBASE_TOTAL_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/CurrentTotal.json';
-        const FIREBASE_PENDING_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/PendingDeposits.json';
-        const FIREBASE_FINALIZED_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/FinalizedLogs.json';
+        const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/calc/MoneyCalculator.json';
+        const FIREBASE_TOTAL_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/calc/CurrentTotal.json';
+        const FIREBASE_PENDING_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/calc/PendingDeposits.json';
+        const FIREBASE_FINALIZED_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com/calc/FinalizedLogs.json';
         
         // Current total amount
         let totalAmount = 0;
@@ -1329,4 +1329,5 @@
         initializeApp();
     </script>
 </body>
+
 </html>
