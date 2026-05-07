@@ -432,6 +432,64 @@ createApp({
         const editingRequestId = ref(null);
         const originalEditValue = ref(0);
 
+        // ===== Phone Number Normalization Helpers =====
+        // Strips dashes, spaces, dots, parentheses, plus signs, and country code prefixes.
+        // Examples:
+        //   "010-1234-5678"     → "01012345678"
+        //   "010 1234 5678"     → "01012345678"
+        //   "+20 10 1234 5678"  → "01012345678"
+        //   "(010) 1234-5678"   → "01012345678"
+        //   "010.1234.5678"     → "01012345678"
+        const normalizePhone = (input) => {
+            if (!input) return '';
+            const str = String(input).trim();
+            
+            // If it looks like an email, just normalize case (no digit stripping)
+            if (str.includes('@')) {
+                return str.toLowerCase().replace(/\s/g, '');
+            }
+            
+            // Strip all non-digit characters (dashes, spaces, dots, parens, plus signs, etc.)
+            let digits = str.replace(/\D/g, '');
+            
+            // Strip Egyptian country code prefix "20" if present and number starts with 201...
+            if (digits.startsWith('201') && digits.length === 12) {
+                digits = digits.substring(1); // becomes "01XXXXXXXXX"
+            }
+            
+            // Strip leading "00" (international dialing prefix) if followed by 20
+            if (digits.startsWith('0020') && digits.length === 14) {
+                digits = digits.substring(3); // strips "002" → leaves "01..."
+            }
+            
+            return digits;
+        };
+        
+        // Compare two phone/email identifiers, handling formatting differences
+        const phonesMatch = (a, b) => {
+            if (!a || !b) return false;
+            const normA = normalizePhone(a);
+            const normB = normalizePhone(b);
+            if (!normA || !normB) return false;
+            
+            // Exact match after normalization
+            if (normA === normB) return true;
+            
+            // For phone numbers, allow trailing-digit match (handles cases where
+            // OCR may pick up extra digits or miss the leading 0)
+            if (!normA.includes('@') && !normB.includes('@')) {
+                // Both must be at least 10 digits to consider partial matching
+                if (normA.length >= 10 && normB.length >= 10) {
+                    // Check if last 10 digits match (covers missing leading zero, country codes)
+                    const lastA = normA.slice(-10);
+                    const lastB = normB.slice(-10);
+                    if (lastA === lastB) return true;
+                }
+            }
+            
+            return false;
+        };
+
         // ===== Computed Properties =====
         const pendingTotal = computed(() => {
             return requests.value
@@ -643,14 +701,14 @@ createApp({
         const isFavorite = (req) => {
             return favorites.value.some(fav => 
                 fav.teacherName === req.teacherName && 
-                fav.teacherNumber === req.teacherNumber
+                phonesMatch(fav.teacherNumber, req.teacherNumber)
             );
         };
 
         const toggleFavorite = async (req) => {
             const existingFav = favorites.value.find(fav => 
                 fav.teacherName === req.teacherName && 
-                fav.teacherNumber === req.teacherNumber
+                phonesMatch(fav.teacherNumber, req.teacherNumber)
             );
 
             if (existingFav) {
@@ -690,7 +748,9 @@ createApp({
         };
 
         const openPaymentApp = (req) => {
-            const phoneNumber = req.teacherNumber.replace(/\s/g, '');
+            // Normalize the phone/email — strips dashes, spaces, dots, parens, etc.
+            const phoneNumber = normalizePhone(req.teacherNumber);
+            const displayNumber = req.teacherNumber; // Keep original for display
             
             if (req.accountType === 'Insta') {
                 if (confirm(`فتح تطبيق إنستا باي؟\n\nالرقم/الإيميل: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nهل تريد نسخ البيانات للحافظة؟`)) {
@@ -803,21 +863,27 @@ createApp({
                 }
                 
                 // ===== FIX 3: Support both phone numbers AND emails =====
+                // Patterns now accept dashes, spaces, dots, parens between digit groups.
                 let ocrPhone = '';
                 
-                // Try phone number first (Egyptian format)
+                // Try phone number first (Egyptian format) - handles all separators
+                // [\s\-.()]* matches optional whitespace, dashes, dots, or parentheses between groups
                 const phonePatterns = [
-                    /01\s*\d{1}\s*\d{8}/,           // "01 X XXXXXXXX"
-                    /01\s*\d{2}\s*\d{3}\s*\d{4}/,   // "01 XX XXX XXXX"
-                    /01\d{9}/,                       // "01XXXXXXXXX"
-                    /\+?2?01\d{9}/,                  // International format
+                    /\+?2?0?\s*[\-.()]?\s*1\s*[\-.()]?\s*[0125]\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d\s*[\-.()]?\s*\d/,
+                    /01[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d[\s\-.()]*\d/,
+                    /01[\s\-.()]*\d{1,4}[\s\-.()]*\d{1,4}[\s\-.()]*\d{1,4}/,
+                    /01\d{9}/,
                 ];
                 
                 for (const pattern of phonePatterns) {
                     const match = text.match(pattern);
                     if (match) {
-                        ocrPhone = match[0].replace(/[\s+]/g, '').replace(/^2/, '');
-                        if (ocrPhone.length === 11) break;
+                        // Normalize: strip all non-digits, then strip country code if present
+                        const normalized = normalizePhone(match[0]);
+                        if (normalized.length === 11 && normalized.startsWith('01')) {
+                            ocrPhone = normalized;
+                            break;
+                        }
                     }
                 }
                 
@@ -848,14 +914,12 @@ createApp({
                     }
                 }
                 
-                // Compare with request data
-                const requestPhone = activeReqToResolve.value.teacherNumber.replace(/\s/g, '').toLowerCase();
-                const ocrPhoneNorm = ocrPhone.toLowerCase();
+                // Compare with request data (using normalization helpers)
+                const requestPhoneRaw = activeReqToResolve.value.teacherNumber;
+                const requestPhone = normalizePhone(requestPhoneRaw);
                 
                 const amountMatches = Math.abs(ocrAmount - parseFloat(activeReqToResolve.value.value)) < 0.01;
-                const phoneMatches = ocrPhoneNorm === requestPhone || 
-                                     (ocrPhoneNorm && requestPhone.includes(ocrPhoneNorm)) ||
-                                     (ocrPhoneNorm && ocrPhoneNorm.includes(requestPhone));
+                const phoneMatches = phonesMatch(ocrPhone, requestPhoneRaw);
                 const hasError = !amountMatches || !phoneMatches;
                 
                 const extracted = {
