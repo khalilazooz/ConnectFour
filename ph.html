@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Cairo', sans-serif; }
@@ -19,6 +20,10 @@
             .mobile-compact { padding: 1rem; }
             .mobile-text-sm { font-size: 0.875rem; }
             .mobile-gap-sm { gap: 0.5rem; }
+        }
+
+        .progress-bar {
+            transition: width 0.3s ease;
         }
     </style>
 </head>
@@ -48,6 +53,9 @@
                     <div>
                         <p class="text-slate-400 font-bold mb-2 text-sm sm:text-base">إجمالي الرصيد المتاح</p>
                         <p class="text-3xl sm:text-5xl font-black tracking-tight">{{ balance.toFixed(2) }} <span class="text-base sm:text-xl text-slate-400">جنيه</span></p>
+                        <p v-if="pendingTotal > 0" class="text-amber-400 text-xs sm:text-sm font-bold mt-2">
+                            ⏳ معلق: {{ pendingTotal.toFixed(2) }} ج | متبقي: {{ (balance - pendingTotal).toFixed(2) }} ج
+                        </p>
                     </div>
                     <div class="flex flex-wrap justify-center gap-2 sm:gap-3" v-if="role === 'Admin'">
                         <button @click="showDepositModal = true" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 sm:px-6 sm:py-3 rounded-xl transition flex items-center gap-2 font-bold shadow-lg shadow-blue-900/20 text-sm">
@@ -73,7 +81,7 @@
             </button>
         </div>
 
-        <!-- قسم المفضلة - في الأعلى -->
+        <!-- قسم المفضلة -->
         <div v-if="favorites.length > 0" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl sm:rounded-3xl shadow-sm border-2 border-amber-200 p-4 sm:p-6 mb-4 sm:mb-6">
             <div class="flex justify-between items-center mb-3 sm:mb-4">
                 <h2 class="text-lg sm:text-xl font-black text-slate-800 flex items-center gap-2">
@@ -103,7 +111,7 @@
                                 </button>
                             </div>
                             <div class="flex flex-wrap gap-2 text-xs text-slate-500 font-bold">
-                                <span class="flex items-center gap-1"><i data-lucide="phone" class="w-3 h-3"></i> {{ fav.teacherNumber }}</span>
+                                <span class="flex items-center gap-1 break-all"><i data-lucide="phone" class="w-3 h-3 flex-shrink-0"></i> {{ fav.teacherNumber }}</span>
                                 <span class="flex items-center gap-1"><i data-lucide="wallet" class="w-3 h-3 text-blue-500"></i> {{ fav.accountType === 'Insta' ? 'إنستا' : 'كاش' }}</span>
                                 <span class="text-blue-600 font-black">{{ fav.value }} ج</span>
                             </div>
@@ -127,15 +135,22 @@
         </div>
 
         <div class="bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-6">
-            <h2 class="text-lg sm:text-xl font-black text-slate-800 mb-4 sm:mb-6 flex items-center gap-2">
-                <i data-lucide="list-ordered" class="text-blue-500 w-5 h-5"></i> قائمة الطلبات
-            </h2>
+            <div class="flex justify-between items-center mb-4 sm:mb-6 flex-wrap gap-2">
+                <h2 class="text-lg sm:text-xl font-black text-slate-800 flex items-center gap-2">
+                    <i data-lucide="list-ordered" class="text-blue-500 w-5 h-5"></i> قائمة الطلبات
+                </h2>
+                <div class="flex gap-2 text-xs">
+                    <button @click="filterStatus = 'all'" :class="filterStatus === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">الكل ({{ requests.length }})</button>
+                    <button @click="filterStatus = 'pending'" :class="filterStatus === 'pending' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">قيد ({{ pendingCount }})</button>
+                    <button @click="filterStatus = 'resolved'" :class="filterStatus === 'resolved' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">منفذ ({{ resolvedCount }})</button>
+                </div>
+            </div>
             
             <div class="grid gap-3 sm:gap-4">
-                <p v-if="requests.length === 0" class="text-slate-400 text-center py-12 sm:py-16 font-bold text-sm">لا توجد طلبات مسجلة</p>
+                <p v-if="filteredRequests.length === 0" class="text-slate-400 text-center py-12 sm:py-16 font-bold text-sm">لا توجد طلبات مسجلة</p>
                 
                 <div v-for="req in filteredRequests" :key="req.id" 
-                    :class="req.status === 'resolved' ? (req.ocrData?.hasError ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200 grayscale') : 'bg-white border-slate-100 shadow-sm'"
+                    :class="req.status === 'resolved' ? (req.ocrData?.hasError ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200') : 'bg-white border-slate-100 shadow-sm'"
                     class="border-2 rounded-xl sm:rounded-2xl p-3 sm:p-5 transition-all text-right">
                     
                     <div class="flex flex-col gap-3">
@@ -143,21 +158,26 @@
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2 mb-2 flex-wrap">
                                     <h3 class="text-base sm:text-lg font-black text-slate-800">{{ req.teacherName }}</h3>
-                                    <span :class="req.status === 'resolved' ? (req.ocrData?.hasError ? 'bg-red-200 text-red-700' : 'bg-slate-200 text-slate-600') : 'bg-amber-100 text-amber-700'" class="px-2 py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase">
-                                        {{ req.status === 'resolved' ? (req.ocrData?.hasError ? '⚠️ خطأ' : 'مكتمل') : 'قيد المراجعة' }}
+                                    <span :class="req.status === 'resolved' ? (req.ocrData?.hasError ? 'bg-red-200 text-red-700' : 'bg-emerald-100 text-emerald-700') : 'bg-amber-100 text-amber-700'" class="px-2 py-1 rounded-lg text-[9px] sm:text-[10px] font-black uppercase">
+                                        {{ req.status === 'resolved' ? (req.ocrData?.hasError ? '⚠️ خطأ' : '✓ مكتمل') : '⏳ قيد المراجعة' }}
                                     </span>
                                     <button 
                                         @click="toggleFavorite(req)" 
                                         :class="isFavorite(req) ? 'text-yellow-500' : 'text-slate-300 hover:text-yellow-400'"
                                         class="transition-colors"
                                         :title="isFavorite(req) ? 'إزالة من المفضلة' : 'إضافة للمفضلة'">
-                                        <i :data-lucide="isFavorite(req) ? 'star' : 'star'" :class="isFavorite(req) ? 'fill-current' : ''" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                                        <i data-lucide="star" :class="isFavorite(req) ? 'fill-current' : ''" class="w-4 h-4 sm:w-5 sm:h-5"></i>
                                     </button>
                                 </div>
                                 <div class="flex flex-wrap gap-2 sm:gap-4 text-xs sm:text-sm text-slate-500 font-bold">
-                                    <span class="flex items-center gap-1"><i data-lucide="phone" class="w-3 h-3 sm:w-4 sm:h-4"></i> {{ req.teacherNumber }}</span>
+                                    <span class="flex items-center gap-1 break-all"><i data-lucide="phone" class="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0"></i> {{ req.teacherNumber }}</span>
                                     <span class="flex items-center gap-1"><i data-lucide="wallet" class="w-3 h-3 sm:w-4 sm:h-4 text-blue-500"></i> {{ req.accountType === 'Insta' ? 'إنستا باي' : 'كاش' }}</span>
                                     <span class="text-base sm:text-lg text-blue-600 font-black">{{ req.value }} ج.م</span>
+                                </div>
+                                <div class="text-[10px] sm:text-xs text-slate-400 mt-2 font-bold flex items-center gap-1">
+                                    <i data-lucide="clock" class="w-3 h-3"></i>
+                                    {{ formatDate(req.createdAt) }}
+                                    <span v-if="req.resolvedAt"> ← {{ formatDate(req.resolvedAt) }}</span>
                                 </div>
                             </div>
                         </div>
@@ -181,8 +201,8 @@
                                     <span class="font-black">{{ req.ocrData.amount }} ج {{ req.ocrData.amountMatches ? '✓' : '✗' }}</span>
                                 </div>
                                 <div class="flex justify-between" :class="req.ocrData.phoneMatches ? 'text-green-600' : 'text-red-600'">
-                                    <span>الرقم في الإيصال:</span>
-                                    <span class="font-black">{{ req.ocrData.phone }} {{ req.ocrData.phoneMatches ? '✓' : '✗' }}</span>
+                                    <span>الرقم/الإيميل:</span>
+                                    <span class="font-black break-all">{{ req.ocrData.phone || 'غير موجود' }} {{ req.ocrData.phoneMatches ? '✓' : '✗' }}</span>
                                 </div>
                                 <div v-if="req.ocrData.hasError" class="mt-2 p-2 bg-red-50 rounded text-red-700 text-[9px] sm:text-[10px] font-bold">
                                     ⚠️ تحذير: البيانات في الإيصال لا تطابق بيانات الطلب
@@ -207,10 +227,15 @@
                         </div>
                     </div>
                 </div>
+
+                <button v-if="hasMoreToShow" @click="displayLimit += 20" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 py-3 rounded-xl font-bold transition text-sm">
+                    عرض المزيد ({{ remainingCount }} متبقي)
+                </button>
             </div>
         </div>
     </div>
 
+    <!-- Logs Modal -->
     <div v-if="showLogsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-[100]" @click.self="showLogsModal = false">
         <div class="bg-white rounded-2xl sm:rounded-[2rem] p-5 sm:p-8 max-w-2xl w-full max-h-[85vh] sm:max-h-[80vh] flex flex-col shadow-2xl">
             <div class="flex justify-between items-center mb-4 sm:mb-6 border-b border-slate-100 pb-3 sm:pb-4">
@@ -238,39 +263,54 @@
         </div>
     </div>
 
+    <!-- Resolve Modal with Local OCR -->
     <div v-if="showResolveModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4 z-[110]">
-        <div class="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl text-right animate-in slide-in-from-bottom-4">
+        <div class="bg-white rounded-[2.5rem] p-6 sm:p-8 max-w-md w-full shadow-2xl text-right max-h-[90vh] overflow-y-auto">
             <div class="text-center mb-6">
                 <div class="w-20 h-20 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
                     <i data-lucide="scan" class="w-10 h-10"></i>
                 </div>
                 <h2 class="text-2xl font-black text-slate-800">توثيق التحويل</h2>
                 <p class="text-slate-500 font-bold mt-1 text-sm">قم برفع إيصال العملية لإتمام الطلب</p>
+                <p class="text-emerald-600 font-bold mt-1 text-xs">🔒 المعالجة محلياً على جهازك</p>
             </div>
             
-            <div class="mb-8">
+            <div class="mb-6">
                 <label class="group block w-full h-48 border-4 border-dashed border-slate-100 rounded-[2rem] cursor-pointer hover:border-blue-400 bg-slate-50 hover:bg-blue-50 transition-all relative overflow-hidden">
-                    <div class="flex flex-col items-center justify-center h-full text-center p-4">
+                    <div v-if="!imagePreview" class="flex flex-col items-center justify-center h-full text-center p-4">
                         <i data-lucide="image" class="w-12 h-12 text-slate-300 group-hover:text-blue-400 mb-2 transition-colors"></i>
                         <p class="text-sm text-slate-400 group-hover:text-blue-600 font-black">اختر الصورة من جهازك</p>
                         <p v-if="selectedFileName" class="mt-2 text-blue-600 text-xs font-black truncate max-w-full px-4">{{ selectedFileName }}</p>
                     </div>
+                    <img v-else :src="imagePreview" class="w-full h-full object-contain" />
                     <input type="file" class="hidden" @change="handleImageSelection" accept="image/*" />
                 </label>
             </div>
 
-            <div v-if="isProcessingOCR" class="mb-6 flex flex-col items-center">
-                <div class="loader ease-linear rounded-full border-4 border-t-4 border-slate-200 h-12 w-12 mb-3"></div>
-                <p class="text-blue-600 font-black animate-pulse">جاري فحص الإيصال...</p>
+            <div v-if="isProcessingOCR" class="mb-6">
+                <div class="flex flex-col items-center mb-3">
+                    <div class="loader ease-linear rounded-full border-4 border-t-4 border-slate-200 h-12 w-12 mb-3"></div>
+                    <p class="text-blue-600 font-black animate-pulse">{{ ocrStatus }}</p>
+                </div>
+                <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                    <div class="progress-bar bg-blue-600 h-2 rounded-full" :style="{ width: ocrProgress + '%' }"></div>
+                </div>
+                <p class="text-center text-xs text-slate-500 mt-1 font-bold">{{ ocrProgress }}%</p>
             </div>
 
-            <div class="flex gap-4">
-                <button @click="processOCRAndResolve" :disabled="!selectedFile || isProcessingOCR" class="flex-1 bg-blue-600 text-white px-6 py-4 rounded-2xl hover:bg-blue-700 disabled:bg-slate-200 transition font-black shadow-lg shadow-blue-200">تأكيد الحل</button>
-                <button @click="closeResolveModal" class="flex-1 bg-slate-100 text-slate-600 px-6 py-4 rounded-2xl hover:bg-slate-200 transition font-black">إلغاء</button>
+            <div v-if="ocrResultPreview && !isProcessingOCR" class="mb-6 p-4 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                <h4 class="text-sm font-black mb-2 text-slate-700">النص المستخرج:</h4>
+                <pre class="text-[10px] text-slate-600 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono">{{ ocrResultPreview }}</pre>
+            </div>
+
+            <div class="flex gap-3 sm:gap-4">
+                <button @click="processOCRAndResolve" :disabled="!selectedFile || isProcessingOCR" class="flex-1 bg-blue-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-blue-700 disabled:bg-slate-200 disabled:cursor-not-allowed transition font-black shadow-lg shadow-blue-200 text-sm sm:text-base">تأكيد الحل</button>
+                <button @click="closeResolveModal" :disabled="isProcessingOCR" class="flex-1 bg-slate-100 text-slate-600 px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-slate-200 disabled:opacity-50 transition font-black text-sm sm:text-base">إلغاء</button>
             </div>
         </div>
     </div>
 
+    <!-- Deposit Modal -->
     <div v-if="showDepositModal" class="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-[100]">
         <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-right">
             <h2 class="text-2xl font-black text-slate-800 mb-6 flex items-center gap-2">
@@ -284,6 +324,7 @@
         </div>
     </div>
 
+    <!-- Edit Balance Modal -->
     <div v-if="showEditBalanceModal" class="fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-[100]">
         <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl text-right">
             <h2 class="text-2xl font-black text-slate-800 mb-6 flex items-center gap-2">
@@ -297,22 +338,57 @@
         </div>
     </div>
 
+    <!-- Request Modal - Now supports email -->
     <div v-if="showRequestModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
-        <div class="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl text-right relative overflow-hidden">
+        <div class="bg-white rounded-[2rem] p-6 sm:p-8 max-w-md w-full shadow-2xl text-right relative overflow-hidden max-h-[90vh] overflow-y-auto">
             <h2 class="text-2xl font-black text-slate-800 mb-6">{{ editingRequestId ? 'تعديل الطلب' : 'طلب دفع جديد' }}</h2>
             
-            <div class="space-y-4 mb-8">
+            <!-- Balance warning -->
+            <div v-if="availableBalance < 0" class="mb-4 p-3 bg-red-50 border-2 border-red-200 rounded-2xl">
+                <p class="text-red-700 font-bold text-sm flex items-center gap-2">
+                    <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                    تحذير: الرصيد المتاح غير كافي ({{ availableBalance.toFixed(2) }} ج)
+                </p>
+            </div>
+            <div v-else class="mb-4 p-3 bg-blue-50 border-2 border-blue-100 rounded-2xl">
+                <p class="text-blue-700 font-bold text-xs flex items-center gap-2">
+                    <i data-lucide="info" class="w-4 h-4"></i>
+                    الرصيد المتاح بعد الطلبات المعلقة: {{ availableBalance.toFixed(2) }} ج
+                </p>
+            </div>
+            
+            <div class="space-y-4 mb-6">
                 <input type="text" v-model="currentRequest.teacherName" placeholder="اسم المعلم / الجهة" class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-bold focus:border-blue-500 outline-none" />
-                <input type="text" v-model="currentRequest.teacherNumber" placeholder="رقم الموبايل" class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-bold focus:border-blue-500 outline-none" />
+                
+                <!-- Changed from type="number" to type="text" to support emails -->
+                <input type="text" v-model="currentRequest.teacherNumber" 
+                    :placeholder="currentRequest.accountType === 'Insta' ? 'رقم الموبايل أو الإيميل (InstaPay)' : 'رقم الموبايل'" 
+                    class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-bold focus:border-blue-500 outline-none" 
+                    dir="ltr" />
+                
                 <select v-model="currentRequest.accountType" class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-bold focus:border-blue-500 outline-none appearance-none">
                     <option value="Insta">إنستا باي (InstaPay)</option>
                     <option value="Wallet">محفظة إلكترونية (Cash)</option>
                 </select>
-                <input type="number" v-model="currentRequest.value" placeholder="المبلغ المطلوب" class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-black text-blue-600 focus:border-blue-500 outline-none" />
+                <input type="number" step="0.01" v-model="currentRequest.value" placeholder="المبلغ المطلوب" class="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 text-right font-black text-blue-600 focus:border-blue-500 outline-none" />
+                
+                <!-- Real-time balance check -->
+                <div v-if="currentRequest.value && parseFloat(currentRequest.value) > availableBalance + (editingRequestId ? originalEditValue : 0)" 
+                    class="p-3 bg-red-50 border-2 border-red-200 rounded-xl">
+                    <p class="text-red-700 font-bold text-xs flex items-center gap-2">
+                        <i data-lucide="x-circle" class="w-4 h-4"></i>
+                        المبلغ المطلوب يتجاوز الرصيد المتاح!
+                    </p>
+                </div>
             </div>
 
             <div class="flex gap-4">
-                <button @click="handleCreateRequest" class="flex-1 bg-blue-600 text-white px-6 py-4 rounded-2xl font-black shadow-lg shadow-blue-100">{{ editingRequestId ? 'حفظ' : 'إرسال' }}</button>
+                <button @click="handleCreateRequest" 
+                    :disabled="!canSubmitRequest"
+                    :class="canSubmitRequest ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-300 cursor-not-allowed'"
+                    class="flex-1 text-white px-6 py-4 rounded-2xl font-black shadow-lg shadow-blue-100 transition">
+                    {{ editingRequestId ? 'حفظ' : 'إرسال' }}
+                </button>
                 <button @click="closeRequestModal" class="flex-1 bg-slate-100 text-slate-600 px-6 py-4 rounded-2xl font-black">تراجع</button>
             </div>
         </div>
@@ -320,12 +396,11 @@
 </div>
 
 <script>
-const { createApp, ref, onMounted, computed, nextTick } = Vue;
+const { createApp, ref, onMounted, computed, nextTick, watch } = Vue;
 
 createApp({
     setup() {
         const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com';
-        const OCR_API_KEY = 'helloworld'; 
 
         const role = ref('User');
         const balance = ref(0);
@@ -333,6 +408,7 @@ createApp({
         const favorites = ref([]);
         const logs = ref([]);
         const displayLimit = ref(20);
+        const filterStatus = ref('all');
         
         const showLogsModal = ref(false);
         const showResolveModal = ref(false);
@@ -343,14 +419,84 @@ createApp({
         
         const selectedFile = ref(null);
         const selectedFileName = ref('');
+        const imagePreview = ref('');
         const isProcessingOCR = ref(false);
+        const ocrProgress = ref(0);
+        const ocrStatus = ref('جاري التحضير...');
+        const ocrResultPreview = ref('');
         const activeReqToResolve = ref(null);
 
         const depositAmount = ref('');
         const newBalanceVal = ref('');
         const currentRequest = ref({ teacherName: '', teacherNumber: '', accountType: 'Insta', value: '' });
         const editingRequestId = ref(null);
+        const originalEditValue = ref(0);
 
+        // ===== Computed Properties =====
+        const pendingTotal = computed(() => {
+            return requests.value
+                .filter(r => r.status === 'pending')
+                .reduce((sum, r) => sum + parseFloat(r.value || 0), 0);
+        });
+
+        const availableBalance = computed(() => {
+            return balance.value - pendingTotal.value;
+        });
+
+        const pendingCount = computed(() => requests.value.filter(r => r.status === 'pending').length);
+        const resolvedCount = computed(() => requests.value.filter(r => r.status === 'resolved').length);
+
+        const canSubmitRequest = computed(() => {
+            if (!currentRequest.value.teacherName || !currentRequest.value.teacherNumber || !currentRequest.value.value) return false;
+            const val = parseFloat(currentRequest.value.value);
+            if (isNaN(val) || val <= 0) return false;
+            // Allow editing existing requests up to original value + available
+            const maxAllowed = availableBalance.value + (editingRequestId.value ? originalEditValue.value : 0);
+            return val <= maxAllowed;
+        });
+
+        // ===== FIX 1: Better sorting - latest first within each status group =====
+        const filteredRequests = computed(() => {
+            let filtered = [...requests.value];
+            
+            // Apply status filter
+            if (filterStatus.value !== 'all') {
+                filtered = filtered.filter(r => r.status === filterStatus.value);
+            }
+            
+            // Sort: pending first (newest first), then resolved (newest first by resolvedAt or createdAt)
+            filtered.sort((a, b) => {
+                // Pending always before resolved
+                if (a.status === 'pending' && b.status === 'resolved') return -1;
+                if (a.status === 'resolved' && b.status === 'pending') return 1;
+                
+                // Within same status, sort by most recent date
+                const aDate = a.status === 'resolved' 
+                    ? new Date(a.resolvedAt || a.createdAt || 0)
+                    : new Date(a.createdAt || 0);
+                const bDate = b.status === 'resolved' 
+                    ? new Date(b.resolvedAt || b.createdAt || 0)
+                    : new Date(b.createdAt || 0);
+                
+                return bDate - aDate; // Latest first
+            });
+            
+            return filtered.slice(0, displayLimit.value);
+        });
+
+        const totalFiltered = computed(() => {
+            if (filterStatus.value === 'all') return requests.value.length;
+            return requests.value.filter(r => r.status === filterStatus.value).length;
+        });
+
+        const hasMoreToShow = computed(() => totalFiltered.value > displayLimit.value);
+        const remainingCount = computed(() => Math.max(0, totalFiltered.value - displayLimit.value));
+
+        const sortedLogs = computed(() => 
+            [...logs.value].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+        );
+
+        // ===== Data Loading =====
         const loadData = async () => {
             try {
                 const [resB, resR, resF, resL] = await Promise.all([
@@ -381,6 +527,7 @@ createApp({
             await loadData();
         };
 
+        // ===== UI Handlers =====
         const toggleLogs = () => {
             showLogsModal.value = !showLogsModal.value;
             if (showLogsModal.value) {
@@ -407,9 +554,7 @@ createApp({
         const handleUpdateBalance = async () => {
             const newVal = parseFloat(newBalanceVal.value);
             if (isNaN(newVal)) return;
-            
             if (!confirm(`هل أنت متأكد من تغيير الرصيد إلى ${newVal} جنيه؟`)) return;
-            
             await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(newVal) });
             await addLog('تعديل الرصيد', `تم تغيير الرصيد يدوياً إلى ${newVal} ج`);
             showEditBalanceModal.value = false;
@@ -431,23 +576,49 @@ createApp({
             if (req) {
                 currentRequest.value = { ...req, value: req.value.toString() };
                 editingRequestId.value = req.id;
+                originalEditValue.value = parseFloat(req.value);
             } else {
                 currentRequest.value = { teacherName: '', teacherNumber: '', accountType: 'Insta', value: '' };
                 editingRequestId.value = null;
+                originalEditValue.value = 0;
             }
             showRequestModal.value = true;
             nextTick(() => lucide.createIcons());
         };
 
-        const closeRequestModal = () => { showRequestModal.value = false; editingRequestId.value = null; };
+        const closeRequestModal = () => { 
+            showRequestModal.value = false; 
+            editingRequestId.value = null;
+            originalEditValue.value = 0;
+        };
 
+        // ===== FIX 4: Balance validation when creating requests =====
         const handleCreateRequest = async () => {
-            if (!currentRequest.value.teacherName || !currentRequest.value.value) return;
+            if (!currentRequest.value.teacherName || !currentRequest.value.teacherNumber || !currentRequest.value.value) {
+                alert('يرجى ملء جميع الحقول');
+                return;
+            }
+            
+            const reqValue = parseFloat(currentRequest.value.value);
+            if (isNaN(reqValue) || reqValue <= 0) {
+                alert('المبلغ غير صحيح');
+                return;
+            }
+
+            // Check balance: available + (if editing, the original value of this request since it counts as pending)
+            const maxAllowed = availableBalance.value + (editingRequestId.value ? originalEditValue.value : 0);
+            
+            if (reqValue > maxAllowed) {
+                alert(`❌ الرصيد المتاح غير كافي!\n\nالرصيد الكلي: ${balance.value.toFixed(2)} ج\nالطلبات المعلقة: ${pendingTotal.value.toFixed(2)} ج\nالمتاح: ${maxAllowed.toFixed(2)} ج\nالمطلوب: ${reqValue.toFixed(2)} ج`);
+                return;
+            }
+
             const data = { 
                 ...currentRequest.value, 
-                value: parseFloat(currentRequest.value.value), 
+                value: reqValue, 
                 status: 'pending', 
-                createdAt: new Date().toISOString() 
+                createdAt: editingRequestId.value ? currentRequest.value.createdAt : new Date().toISOString(),
+                updatedAt: new Date().toISOString()
             };
             
             if (editingRequestId.value) {
@@ -468,6 +639,7 @@ createApp({
             await loadData();
         };
 
+        // ===== Favorites =====
         const isFavorite = (req) => {
             return favorites.value.some(fav => 
                 fav.teacherName === req.teacherName && 
@@ -495,7 +667,6 @@ createApp({
                 await fetch(`${FIREBASE_URL}/favorites.json`, { method: 'POST', body: JSON.stringify(favData) });
                 await addLog('إضافة للمفضلة', `تمت إضافة ${req.teacherName} للمفضلة`);
             }
-            
             await loadData();
         };
 
@@ -513,6 +684,7 @@ createApp({
                 value: fav.value.toString()
             };
             editingRequestId.value = null;
+            originalEditValue.value = 0;
             showRequestModal.value = true;
             nextTick(() => lucide.createIcons());
         };
@@ -521,34 +693,14 @@ createApp({
             const phoneNumber = req.teacherNumber.replace(/\s/g, '');
             
             if (req.accountType === 'Insta') {
-                // محاولة فتح تطبيق InstaPay
-                // يمكن استخدام deep link إذا كان متاحاً
-                const instaPayUrl = `instapay://send?phone=${phoneNumber}&amount=${req.value}`;
-                const fallbackUrl = `https://instapay.com.eg`; // URL احتياطي
-                
-                // محاولة فتح التطبيق
-                const link = document.createElement('a');
-                link.href = instaPayUrl;
-                link.target = '_blank';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                
-                // إذا فشل فتح التطبيق، عرض رسالة مع الرقم
-                setTimeout(() => {
-                    if (confirm(`فتح تطبيق إنستا باي؟\n\nالرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nانسخ الرقم للحافظة؟`)) {
-                        navigator.clipboard.writeText(phoneNumber).then(() => {
-                            alert(`✅ تم نسخ الرقم: ${phoneNumber}\n\nافتح تطبيق إنستا باي يدوياً والصق الرقم`);
-                        }).catch(() => {
-                            alert(`الرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه`);
-                        });
-                    }
-                }, 500);
-                
+                if (confirm(`فتح تطبيق إنستا باي؟\n\nالرقم/الإيميل: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nهل تريد نسخ البيانات للحافظة؟`)) {
+                    navigator.clipboard.writeText(phoneNumber).then(() => {
+                        alert(`✅ تم نسخ: ${phoneNumber}\n\nافتح تطبيق إنستا باي والصق البيانات`);
+                    }).catch(() => {
+                        alert(`الرقم/الإيميل: ${phoneNumber}\nالمبلغ: ${req.value} جنيه`);
+                    });
+                }
             } else {
-                // فتح تطبيق المحفظة (Vodafone Cash / Orange Cash / etc)
-                const walletUrl = `tel:${phoneNumber}`;
-                
                 if (confirm(`فتح تطبيق المحفظة؟\n\nالرقم: ${phoneNumber}\nالمبلغ: ${req.value} جنيه\n\nهل تريد نسخ الرقم للحافظة؟`)) {
                     navigator.clipboard.writeText(phoneNumber).then(() => {
                         alert(`✅ تم نسخ الرقم: ${phoneNumber}\n\nافتح تطبيق المحفظة الإلكترونية يدوياً`);
@@ -561,9 +713,15 @@ createApp({
             addLog('فتح تطبيق الدفع', `محاولة فتح ${req.accountType === 'Insta' ? 'إنستا باي' : 'المحفظة'} للمعلم ${req.teacherName} - ${phoneNumber}`);
         };
 
+        // ===== OCR Section =====
         const openResolveModal = (req) => { 
             activeReqToResolve.value = req; 
             showResolveModal.value = true; 
+            selectedFile.value = null;
+            selectedFileName.value = '';
+            imagePreview.value = '';
+            ocrResultPreview.value = '';
+            ocrProgress.value = 0;
             nextTick(() => lucide.createIcons()); 
         };
         
@@ -571,130 +729,389 @@ createApp({
             showResolveModal.value = false; 
             selectedFile.value = null; 
             selectedFileName.value = ''; 
+            imagePreview.value = '';
+            ocrResultPreview.value = '';
+            ocrProgress.value = 0;
         };
 
         const handleImageSelection = (e) => {
             const f = e.target.files[0];
             if (f) { 
                 selectedFile.value = f; 
-                selectedFileName.value = f.name; 
+                selectedFileName.value = f.name;
+                
+                // Generate preview
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    imagePreview.value = ev.target.result;
+                };
+                reader.readAsDataURL(f);
             }
         };
 
+        // ===== FIX 2: Local OCR with Tesseract.js + Comma handling =====
         const processOCRAndResolve = async () => {
             if (!selectedFile.value) return;
             isProcessingOCR.value = true;
-            const reader = new FileReader();
-            reader.onload = async () => {
-                const base64 = reader.result.split(',')[1];
-                const fd = new FormData();
-                fd.append('base64Image', 'data:image/png;base64,' + base64);
-                fd.append('apikey', OCR_API_KEY);
-                try {
-                    const res = await fetch('https://api.ocr.space/parse/image', { method: 'POST', body: fd });
-                    const json = await res.json();
-                    const text = json.ParsedResults?.[0]?.ParsedText || '';
-                    
-                    // استخراج البيانات من نص OCR
-                    const amountMatch = text.match(/(\d+)\s*EGP/);
-                    const ocrAmount = amountMatch ? parseFloat(amountMatch[1]) : 0;
-                    
-                    const phoneMatch = text.match(/01\s*\d{2}\s*\d{3}\s*\d{4}/);
-                    const ocrPhone = phoneMatch ? phoneMatch[0].replace(/\s/g, '') : '';
-                    
-                    const referenceMatch = text.match(/\d{12}/);
-                    const ocrReference = referenceMatch ? referenceMatch[0] : 'N/A';
-                    
-                    const dateMatch = text.match(/(\d{1,2}\s+\w+\s+\d{4}\s+\d{1,2}:\d{2}\s+[AP]M)/);
-                    const ocrDate = dateMatch ? dateMatch[1] : new Date().toLocaleString('ar-EG');
-                    
-                    // التحقق من تطابق البيانات
-                    const requestPhone = activeReqToResolve.value.teacherNumber.replace(/\s/g, '');
-                    const amountMatches = ocrAmount === activeReqToResolve.value.value;
-                    const phoneMatches = ocrPhone === requestPhone;
-                    const hasError = !amountMatches || !phoneMatches;
-                    
-                    const extracted = {
-                        reference: ocrReference,
-                        amount: ocrAmount,
-                        phone: ocrPhone,
-                        date: ocrDate,
-                        requestedAmount: activeReqToResolve.value.value,
-                        requestedPhone: activeReqToResolve.value.teacherNumber,
-                        amountMatches,
-                        phoneMatches,
-                        hasError
-                    };
-
-                    // تأكيد العملية
-                    const confirmMsg = hasError 
-                        ? `⚠️ تحذير: تم اكتشاف عدم تطابق!\n\n` +
-                          `${!amountMatches ? `❌ المبلغ: ${ocrAmount} ج (المطلوب: ${activeReqToResolve.value.value} ج)\n` : ''}` +
-                          `${!phoneMatches ? `❌ الرقم: ${ocrPhone} (المطلوب: ${requestPhone})\n` : ''}` +
-                          `\nهل تريد المتابعة رغم ذلك؟`
-                        : `✅ تم التحقق بنجاح!\n\n` +
-                          `المبلغ: ${ocrAmount} ج\n` +
-                          `الرقم: ${ocrPhone}\n` +
-                          `المرجع: ${ocrReference}\n\n` +
-                          `هل تريد إتمام العملية وخصم المبلغ من الرصيد؟`;
-                    
-                    if (!confirm(confirmMsg)) {
-                        isProcessingOCR.value = false;
-                        return;
+            ocrProgress.value = 0;
+            ocrStatus.value = 'جاري تحميل محرك OCR...';
+            
+            try {
+                // Use Tesseract.js for local OCR (English + Arabic numbers)
+                const result = await Tesseract.recognize(
+                    selectedFile.value,
+                    'eng', // English works best for InstaPay receipts (numbers/Latin)
+                    {
+                        logger: (m) => {
+                            if (m.status === 'recognizing text') {
+                                ocrProgress.value = Math.round(m.progress * 100);
+                                ocrStatus.value = `جاري قراءة النص... ${ocrProgress.value}%`;
+                            } else if (m.status === 'loading tesseract core') {
+                                ocrStatus.value = 'تحميل محرك OCR...';
+                            } else if (m.status === 'initializing tesseract') {
+                                ocrStatus.value = 'تهيئة المحرك...';
+                            } else if (m.status === 'loading language traineddata') {
+                                ocrStatus.value = 'تحميل قاعدة البيانات...';
+                            } else if (m.status === 'initializing api') {
+                                ocrStatus.value = 'بدء التشغيل...';
+                            }
+                        }
                     }
-
-                    const newBal = balance.value - activeReqToResolve.value.value;
-                    await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(newBal) });
-                    await fetch(`${FIREBASE_URL}/requests/${activeReqToResolve.value.id}.json`, { 
-                        method: 'PATCH', 
-                        body: JSON.stringify({ status: 'resolved', ocrData: extracted }) 
-                    });
-                    
-                    const logDetails = hasError 
-                        ? `دفع ${activeReqToResolve.value.value} ج للمعلم ${activeReqToResolve.value.teacherName} مع أخطاء. المرجع: ${ocrReference}`
-                        : `دفع ${activeReqToResolve.value.value} ج للمعلم ${activeReqToResolve.value.teacherName}. المرجع: ${ocrReference}`;
-                    
-                    await addLog(hasError ? 'تم الدفع (خطأ)' : 'تم الدفع (OCR)', logDetails);
-                    closeResolveModal();
-                    await loadData();
-                } catch (e) { 
-                    alert('خطأ في الاتصال بخدمة OCR'); 
-                    console.error('OCR Error:', e);
+                );
+                
+                const text = result.data.text || '';
+                ocrResultPreview.value = text;
+                console.log('OCR Text:', text);
+                
+                // ===== FIX 2: Better number parsing with comma support =====
+                // Match amounts like "1,500 EGP" or "1500 EGP" or "1,500.00 EGP"
+                let ocrAmount = 0;
+                const amountPatterns = [
+                    /([\d,]+\.?\d*)\s*EGP/i,           // "1,500 EGP" or "1500.00 EGP"
+                    /EGP\s*([\d,]+\.?\d*)/i,           // "EGP 1,500"
+                    /([\d,]+\.?\d*)\s*(?:جنيه|ج\.م|ج)/i, // Arabic
+                    /Amount[:\s]+([\d,]+\.?\d*)/i,     // "Amount: 1,500"
+                ];
+                
+                for (const pattern of amountPatterns) {
+                    const match = text.match(pattern);
+                    if (match) {
+                        // Remove commas before parsing
+                        ocrAmount = parseFloat(match[1].replace(/,/g, ''));
+                        if (!isNaN(ocrAmount) && ocrAmount > 0) break;
+                    }
                 }
-                finally { isProcessingOCR.value = false; }
-            };
-            reader.readAsDataURL(selectedFile.value);
+                
+                // ===== FIX 3: Support both phone numbers AND emails =====
+                let ocrPhone = '';
+                
+                // Try phone number first (Egyptian format)
+                const phonePatterns = [
+                    /01\s*\d{1}\s*\d{8}/,           // "01 X XXXXXXXX"
+                    /01\s*\d{2}\s*\d{3}\s*\d{4}/,   // "01 XX XXX XXXX"
+                    /01\d{9}/,                       // "01XXXXXXXXX"
+                    /\+?2?01\d{9}/,                  // International format
+                ];
+                
+                for (const pattern of phonePatterns) {
+                    const match = text.match(pattern);
+                    if (match) {
+                        ocrPhone = match[0].replace(/[\s+]/g, '').replace(/^2/, '');
+                        if (ocrPhone.length === 11) break;
+                    }
+                }
+                
+                // If no phone found, try email
+                if (!ocrPhone) {
+                    const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                    if (emailMatch) {
+                        ocrPhone = emailMatch[0].toLowerCase();
+                    }
+                }
+                
+                // Reference number (typically 12+ digits)
+                const referenceMatch = text.match(/\b\d{10,16}\b/);
+                const ocrReference = referenceMatch ? referenceMatch[0] : 'N/A';
+                
+                // Date matching
+                const datePatterns = [
+                    /(\d{1,2}\s+\w+\s+\d{4}\s+\d{1,2}:\d{2}\s*[AP]M)/i,
+                    /(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2})/,
+                    /(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})/
+                ];
+                let ocrDate = new Date().toLocaleString('ar-EG');
+                for (const pattern of datePatterns) {
+                    const match = text.match(pattern);
+                    if (match) {
+                        ocrDate = match[1];
+                        break;
+                    }
+                }
+                
+                // Compare with request data
+                const requestPhone = activeReqToResolve.value.teacherNumber.replace(/\s/g, '').toLowerCase();
+                const ocrPhoneNorm = ocrPhone.toLowerCase();
+                
+                const amountMatches = Math.abs(ocrAmount - parseFloat(activeReqToResolve.value.value)) < 0.01;
+                const phoneMatches = ocrPhoneNorm === requestPhone || 
+                                     (ocrPhoneNorm && requestPhone.includes(ocrPhoneNorm)) ||
+                                     (ocrPhoneNorm && ocrPhoneNorm.includes(requestPhone));
+                const hasError = !amountMatches || !phoneMatches;
+                
+                const extracted = {
+                    reference: ocrReference,
+                    amount: ocrAmount,
+                    phone: ocrPhone,
+                    date: ocrDate,
+                    requestedAmount: activeReqToResolve.value.value,
+                    requestedPhone: activeReqToResolve.value.teacherNumber,
+                    amountMatches,
+                    phoneMatches,
+                    hasError,
+                    rawText: text.substring(0, 500) // Store first 500 chars for debugging
+                };
+
+                const confirmMsg = hasError 
+                    ? `⚠️ تحذير: تم اكتشاف عدم تطابق!\n\n` +
+                      `${!amountMatches ? `❌ المبلغ المستخرج: ${ocrAmount} ج (المطلوب: ${activeReqToResolve.value.value} ج)\n` : `✓ المبلغ: ${ocrAmount} ج\n`}` +
+                      `${!phoneMatches ? `❌ الرقم/الإيميل: ${ocrPhone || 'غير موجود'} (المطلوب: ${requestPhone})\n` : `✓ الرقم: ${ocrPhone}\n`}` +
+                      `\nهل تريد المتابعة رغم ذلك؟`
+                    : `✅ تم التحقق بنجاح!\n\n` +
+                      `المبلغ: ${ocrAmount} ج\n` +
+                      `الرقم/الإيميل: ${ocrPhone}\n` +
+                      `المرجع: ${ocrReference}\n\n` +
+                      `هل تريد إتمام العملية وخصم المبلغ من الرصيد؟`;
+                
+                if (!confirm(confirmMsg)) {
+                    isProcessingOCR.value = false;
+                    return;
+                }
+
+                const newBal = balance.value - parseFloat(activeReqToResolve.value.value);
+                await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(newBal) });
+                await fetch(`${FIREBASE_URL}/requests/${activeReqToResolve.value.id}.json`, { 
+                    method: 'PATCH', 
+                    body: JSON.stringify({ 
+                        status: 'resolved', 
+                        ocrData: extracted,
+                        resolvedAt: new Date().toISOString()
+                    }) 
+                });
+                
+                const logDetails = hasError 
+                    ? `دفع ${activeReqToResolve.value.value} ج للمعلم ${activeReqToResolve.value.teacherName} مع أخطاء. المرجع: ${ocrReference}`
+                    : `دفع ${activeReqToResolve.value.value} ج للمعلم ${activeReqToResolve.value.teacherName}. المرجع: ${ocrReference}`;
+                
+                await addLog(hasError ? 'تم الدفع (خطأ)' : 'تم الدفع (OCR)', logDetails);
+                closeResolveModal();
+                await loadData();
+            } catch (e) { 
+                console.error('OCR Error:', e);
+                alert('خطأ في معالجة الصورة: ' + e.message); 
+            } finally { 
+                isProcessingOCR.value = false; 
+            }
         };
 
-        const sortedLogs = computed(() => [...logs.value].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
-        const filteredRequests = computed(() => {
-            return [...requests.value]
-                .sort((a, b) => (a.status === 'pending' ? -1 : 1))
-                .slice(0, displayLimit.value);
+        const formatDate = (ts) => {
+            if (!ts) return '-';
+            try {
+                return new Date(ts).toLocaleString('ar-EG', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            } catch (e) {
+                return ts;
+            }
+        };
+
+        // Reset display limit when filter changes
+        watch(filterStatus, () => {
+            displayLimit.value = 20;
         });
 
-        onMounted(() => {
+        // ===== Handle GET request balance operations (Admin only) =====
+        // Usage examples:
+        //   ?Admin&deposit=500              → Add 500 to balance
+        //   ?Admin&deposit=500&txn=ABC123   → Add 500 (with unique txn ID to prevent duplicates)
+        //   ?Admin&setBalance=2000          → Set balance to exactly 2000
+        //   ?Admin&deposit=500&silent=1     → Skip confirmation dialog
+        const handleUrlBalanceOperations = async () => {
+            const params = new URLSearchParams(window.location.search);
+            
+            // Only process if Admin mode
+            if (params.get('Admin') === null) return;
+            
+            const depositParam = params.get('deposit');
+            const setBalanceParam = params.get('setBalance');
+            const txnId = params.get('txn'); // Optional unique transaction ID
+            const silent = params.get('silent') === '1';
+            
+            if (!depositParam && !setBalanceParam) return;
+            
+            // Wait for initial data load to complete
+            await loadData();
+            
+            // Deduplication: check if this txn was already processed
+            if (txnId) {
+                const txnKey = `processed_txn_${txnId}`;
+                const alreadyProcessed = sessionStorage.getItem(txnKey);
+                if (alreadyProcessed) {
+                    console.log(`Transaction ${txnId} already processed, skipping`);
+                    cleanUrl();
+                    return;
+                }
+                
+                // Also check logs to prevent re-processing on different sessions
+                const txnLogged = logs.value.some(log => 
+                    log.details && log.details.includes(`[TXN:${txnId}]`)
+                );
+                if (txnLogged) {
+                    console.log(`Transaction ${txnId} found in logs, skipping`);
+                    sessionStorage.setItem(txnKey, '1');
+                    cleanUrl();
+                    return;
+                }
+            }
+            
+            try {
+                // Handle deposit (add to balance)
+                if (depositParam) {
+                    const amount = parseFloat(depositParam);
+                    if (isNaN(amount) || amount <= 0) {
+                        if (!silent) alert(`❌ مبلغ الإيداع غير صحيح: ${depositParam}`);
+                        cleanUrl();
+                        return;
+                    }
+                    
+                    const confirmed = silent || confirm(
+                        `🔔 طلب إيداع تلقائي عبر الرابط\n\n` +
+                        `المبلغ: ${amount} جنيه\n` +
+                        `${txnId ? `معرف العملية: ${txnId}\n` : ''}` +
+                        `الرصيد الحالي: ${balance.value.toFixed(2)} ج\n` +
+                        `الرصيد بعد الإيداع: ${(balance.value + amount).toFixed(2)} ج\n\n` +
+                        `هل تريد المتابعة؟`
+                    );
+                    
+                    if (!confirmed) {
+                        cleanUrl();
+                        return;
+                    }
+                    
+                    const newBalance = balance.value + amount;
+                    await fetch(`${FIREBASE_URL}/balance.json`, { 
+                        method: 'PUT', 
+                        body: JSON.stringify(newBalance) 
+                    });
+                    
+                    const logDetails = txnId 
+                        ? `إيداع تلقائي عبر الرابط: ${amount} ج [TXN:${txnId}]`
+                        : `إيداع تلقائي عبر الرابط: ${amount} ج`;
+                    
+                    await addLog('إيداع تلقائي (GET)', logDetails);
+                    
+                    if (txnId) sessionStorage.setItem(`processed_txn_${txnId}`, '1');
+                    
+                    if (!silent) {
+                        alert(`✅ تم الإيداع بنجاح\n\nالمبلغ المضاف: ${amount} ج\nالرصيد الجديد: ${newBalance.toFixed(2)} ج`);
+                    }
+                }
+                
+                // Handle setBalance (overwrite balance)
+                if (setBalanceParam) {
+                    const amount = parseFloat(setBalanceParam);
+                    if (isNaN(amount) || amount < 0) {
+                        if (!silent) alert(`❌ قيمة الرصيد غير صحيحة: ${setBalanceParam}`);
+                        cleanUrl();
+                        return;
+                    }
+                    
+                    const confirmed = silent || confirm(
+                        `⚠️ طلب تعديل الرصيد عبر الرابط\n\n` +
+                        `الرصيد الحالي: ${balance.value.toFixed(2)} ج\n` +
+                        `الرصيد الجديد: ${amount.toFixed(2)} ج\n` +
+                        `${txnId ? `معرف العملية: ${txnId}\n` : ''}` +
+                        `\nهل أنت متأكد من تغيير الرصيد؟`
+                    );
+                    
+                    if (!confirmed) {
+                        cleanUrl();
+                        return;
+                    }
+                    
+                    await fetch(`${FIREBASE_URL}/balance.json`, { 
+                        method: 'PUT', 
+                        body: JSON.stringify(amount) 
+                    });
+                    
+                    const logDetails = txnId 
+                        ? `تعديل الرصيد عبر الرابط إلى ${amount} ج [TXN:${txnId}]`
+                        : `تعديل الرصيد عبر الرابط إلى ${amount} ج`;
+                    
+                    await addLog('تعديل الرصيد (GET)', logDetails);
+                    
+                    if (txnId) sessionStorage.setItem(`processed_txn_${txnId}`, '1');
+                    
+                    if (!silent) {
+                        alert(`✅ تم تعديل الرصيد\n\nالرصيد الجديد: ${amount.toFixed(2)} ج`);
+                    }
+                }
+                
+                cleanUrl();
+                await loadData();
+            } catch (e) {
+                console.error('GET balance operation error:', e);
+                if (!silent) alert(`❌ خطأ في معالجة العملية: ${e.message}`);
+            }
+        };
+        
+        // Clean URL parameters after processing (keeps Admin flag)
+        const cleanUrl = () => {
+            const url = new URL(window.location.href);
+            const isAdmin = url.searchParams.get('Admin') !== null;
+            
+            // Remove balance operation params
+            url.searchParams.delete('deposit');
+            url.searchParams.delete('setBalance');
+            url.searchParams.delete('txn');
+            url.searchParams.delete('silent');
+            
+            // Keep Admin flag if present
+            const newSearch = isAdmin ? '?Admin' : '';
+            const newUrl = url.pathname + newSearch + url.hash;
+            window.history.replaceState({}, '', newUrl);
+        };
+
+        onMounted(async () => {
             const params = new URLSearchParams(window.location.search);
             role.value = params.get('Admin') !== null ? 'Admin' : 'User';
-            loadData();
+            await loadData();
+            
+            // Handle GET request balance operations
+            await handleUrlBalanceOperations();
+            
             setInterval(loadData, 20000);
         });
 
         return {
-            role, balance, requests, logs, favorites, displayLimit,
+            role, balance, requests, logs, favorites, displayLimit, filterStatus,
             showLogsModal, showResolveModal, showDepositModal, showEditBalanceModal, showRequestModal, showAllFavorites,
-            selectedFile, selectedFileName, isProcessingOCR,
-            depositAmount, newBalanceVal, currentRequest, editingRequestId,
+            selectedFile, selectedFileName, imagePreview, isProcessingOCR, ocrProgress, ocrStatus, ocrResultPreview,
+            depositAmount, newBalanceVal, currentRequest, editingRequestId, originalEditValue,
+            pendingTotal, availableBalance, pendingCount, resolvedCount, canSubmitRequest,
+            hasMoreToShow, remainingCount,
             handleDeposit, openEditBalance, handleUpdateBalance, toggleLogs, shareBalance,
             openRequestModal, closeRequestModal, handleCreateRequest, handleDeleteRequest,
             openResolveModal, closeResolveModal, handleImageSelection, processOCRAndResolve,
             isFavorite, toggleFavorite, removeFavorite, createFromFavorite, openPaymentApp,
             sortedLogs, filteredRequests,
-            formatDate: (ts) => new Date(ts).toLocaleString('ar-EG')
+            formatDate
         }
     }
 }).mount('#app');
 </script>
 </body>
 </html>
-
