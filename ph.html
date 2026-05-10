@@ -8,6 +8,9 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+    <!-- Firebase v9 compat for simpler integration -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Cairo', sans-serif; }
@@ -22,14 +25,177 @@
             .mobile-gap-sm { gap: 0.5rem; }
         }
 
-        .progress-bar {
-            transition: width 0.3s ease;
+        .progress-bar { transition: width 0.3s ease; }
+        
+        /* Toast animations */
+        .toast-enter-active, .toast-leave-active { transition: all 0.3s ease; }
+        .toast-enter-from { opacity: 0; transform: translateY(-20px); }
+        .toast-leave-to { opacity: 0; transform: translateX(100%); }
+        
+        /* Card hover effect */
+        .request-card { transition: all 0.2s ease; }
+        .request-card:hover { transform: translateY(-2px); }
+        
+        /* Pulse for new requests */
+        @keyframes pulse-blue {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+            50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
         }
+        .pulse-new { animation: pulse-blue 2s infinite; }
+        
+        /* Skeleton loader */
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #f1f5f9 0%, #e2e8f0 50%, #f1f5f9 100%);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite linear;
+        }
+        
+        /* Dark mode */
+        .dark { color-scheme: dark; }
+        .dark body { background: #0f172a; color: #e2e8f0; }
+        .dark .bg-white { background: #1e293b !important; }
+        .dark .bg-slate-50 { background: #0f172a !important; }
+        .dark .bg-slate-100 { background: #334155 !important; }
+        .dark .text-slate-800 { color: #f1f5f9 !important; }
+        .dark .text-slate-700 { color: #e2e8f0 !important; }
+        .dark .text-slate-600 { color: #cbd5e1 !important; }
+        .dark .text-slate-500 { color: #94a3b8 !important; }
+        .dark .text-slate-400 { color: #94a3b8 !important; }
+        .dark .border-slate-100, .dark .border-slate-200 { border-color: #334155 !important; }
+        .dark .bg-amber-50 { background: #422006 !important; }
+        .dark .bg-orange-50 { background: #431407 !important; }
+        .dark .border-amber-100, .dark .border-amber-200 { border-color: #78350f !important; }
+        .dark .from-amber-50 { --tw-gradient-from: #422006 !important; }
+        .dark .to-orange-50 { --tw-gradient-to: #431407 !important; }
+        .dark .bg-blue-50 { background: #172554 !important; }
+        .dark .bg-emerald-50 { background: #064e3b !important; }
+        .dark .bg-red-50 { background: #450a0a !important; }
+        .dark .bg-amber-100 { background: #78350f !important; }
+        .dark .text-amber-700 { color: #fcd34d !important; }
+        .dark .text-blue-600, .dark .text-blue-700 { color: #60a5fa !important; }
+        .dark .text-emerald-700 { color: #34d399 !important; }
+        .dark .text-red-700 { color: #fca5a5 !important; }
     </style>
 </head>
 <body class="min-h-screen bg-slate-50 p-2 sm:p-4">
 
 <div id="app" v-cloak>
+    <!-- ===== LOADING / AUTH CHECK ===== -->
+    <div v-if="authLoading" class="min-h-screen flex items-center justify-center">
+        <div class="text-center">
+            <div class="loader ease-linear rounded-full border-4 border-t-4 border-slate-200 h-16 w-16 mb-4 mx-auto"></div>
+            <p class="text-slate-600 font-bold">جاري التحقق من الجلسة...</p>
+        </div>
+    </div>
+
+    <!-- ===== LOGIN / SIGNUP SCREEN ===== -->
+    <div v-else-if="!isAuthenticated" class="min-h-screen flex items-center justify-center p-4">
+        <div class="w-full max-w-md">
+            <div class="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 border border-slate-100">
+                <!-- Logo -->
+                <div class="text-center mb-6">
+                    <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-2xl text-white shadow-lg mb-3">
+                        <i data-lucide="wallet" class="w-8 h-8"></i>
+                    </div>
+                    <h1 class="text-2xl sm:text-3xl font-black text-slate-800">مدفوعاتي</h1>
+                    <p class="text-slate-500 text-sm font-bold mt-1">تسجيل الدخول</p>
+                </div>
+
+                <!-- Form -->
+                <div class="space-y-4">
+                    <!-- Email -->
+                    <div>
+                        <label class="text-xs font-black text-slate-700 mb-1 block">البريد الإلكتروني</label>
+                        <div class="relative">
+                            <i data-lucide="mail" class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2"></i>
+                            <input 
+                                type="email" 
+                                v-model="authEmail"
+                                @keyup.enter="handleAuthSubmit"
+                                placeholder="example@email.com"
+                                dir="ltr"
+                                autocomplete="email"
+                                class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 pr-10 text-right font-bold focus:border-blue-500 outline-none" />
+                        </div>
+                    </div>
+
+                    <!-- Password -->
+                    <div>
+                        <label class="text-xs font-black text-slate-700 mb-1 block">كلمة المرور</label>
+                        <div class="relative">
+                            <i data-lucide="lock" class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2"></i>
+                            <input 
+                                :type="showPassword ? 'text' : 'password'" 
+                                v-model="authPassword"
+                                @keyup.enter="handleAuthSubmit"
+                                placeholder="••••••••"
+                                dir="ltr"
+                                autocomplete="current-password"
+                                class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 pr-10 pl-10 text-right font-bold focus:border-blue-500 outline-none" />
+                            <button 
+                                type="button"
+                                @click="showPassword = !showPassword"
+                                class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-blue-600">
+                                <i :data-lucide="showPassword ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Remember me + Forgot password -->
+                    <div class="flex items-center justify-between">
+                        <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                            <input type="checkbox" v-model="rememberMe" class="w-4 h-4 rounded" />
+                            تذكرني
+                        </label>
+                        <button 
+                            @click="handleForgotPassword" 
+                            class="text-blue-600 hover:text-blue-700 text-sm font-bold transition">
+                            نسيت كلمة المرور؟
+                        </button>
+                    </div>
+
+                    <!-- Error message -->
+                    <div v-if="authError" class="bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm font-bold flex items-start gap-2">
+                        <i data-lucide="alert-circle" class="w-4 h-4 flex-shrink-0 mt-0.5"></i>
+                        <span>{{ authError }}</span>
+                    </div>
+
+                    <!-- Submit button -->
+                    <button 
+                        @click="handleAuthSubmit"
+                        :disabled="authProcessing"
+                        class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-6 py-4 rounded-2xl font-black shadow-lg shadow-blue-200 transition flex items-center justify-center gap-2">
+                        <div v-if="authProcessing" class="loader ease-linear rounded-full border-2 border-t-2 border-white/30 h-4 w-4"></div>
+                        <i v-else data-lucide="log-in" class="w-5 h-5"></i>
+                        <span>{{ authProcessing ? 'جاري...' : 'دخول' }}</span>
+                    </button>
+
+                    <!-- Notice: signup disabled -->
+                    <div class="text-center pt-2 border-t border-slate-100">
+                        <p class="text-xs text-slate-400 font-bold flex items-center justify-center gap-1">
+                            <i data-lucide="info" class="w-3 h-3"></i>
+                            الحسابات تُنشأ من قِبَل المسؤول فقط
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dark mode toggle on auth screen -->
+            <div class="text-center mt-4">
+                <button @click="toggleDarkMode" class="text-slate-500 hover:text-slate-700 text-sm font-bold flex items-center gap-2 mx-auto">
+                    <i :data-lucide="darkMode ? 'sun' : 'moon'" class="w-4 h-4"></i>
+                    {{ darkMode ? 'الوضع الفاتح' : 'الوضع الداكن' }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== MAIN APP (only shown when authenticated) ===== -->
+    <template v-else>
     <div class="max-w-6xl mx-auto mb-4 sm:mb-6">
         <div class="bg-white rounded-2xl sm:rounded-3xl shadow-sm border border-slate-200 p-4 sm:p-6">
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-0 mb-4 sm:mb-6">
@@ -42,10 +208,25 @@
                         <p class="text-slate-500 text-xs sm:text-sm font-bold">لوحة تحكم {{ role === 'Admin' ? 'المدير' : 'المستخدم' }}</p>
                     </div>
                 </div>
-                <button @click="toggleLogs" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 sm:px-5 sm:py-2.5 rounded-xl flex items-center gap-2 transition-all font-bold text-sm">
-                    <i data-lucide="history" class="w-4 h-4 sm:w-5 sm:h-5"></i>
-                    السجلات
-                </button>
+                <div class="flex gap-2 items-center flex-wrap">
+                    <span v-if="currentUser" class="hidden md:flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-xl text-xs font-bold text-slate-700">
+                        <i data-lucide="user-circle" class="w-4 h-4"></i>
+                        <span class="truncate max-w-[150px]">{{ currentUser.email }}</span>
+                    </span>
+                    <button @click="toggleDarkMode" :title="darkMode ? 'الوضع الفاتح' : 'الوضع الداكن'" class="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 sm:p-2.5 rounded-xl transition-all">
+                        <i :data-lucide="darkMode ? 'sun' : 'moon'" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                    </button>
+                    <button @click="openStatsModal" title="الإحصائيات" class="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 sm:p-2.5 rounded-xl transition-all">
+                        <i data-lucide="bar-chart-3" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                    </button>
+                    <button @click="toggleLogs" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl flex items-center gap-2 transition-all font-bold text-sm">
+                        <i data-lucide="history" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                        <span class="hidden sm:inline">السجلات</span>
+                    </button>
+                    <button @click="handleLogout" title="تسجيل الخروج" class="bg-red-50 hover:bg-red-100 text-red-600 p-2 sm:p-2.5 rounded-xl transition-all">
+                        <i data-lucide="log-out" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+                    </button>
+                </div>
             </div>
             
             <div class="bg-slate-900 rounded-2xl sm:rounded-3xl p-5 sm:p-8 text-white relative overflow-hidden shadow-2xl">
@@ -139,11 +320,27 @@
                 <h2 class="text-lg sm:text-xl font-black text-slate-800 flex items-center gap-2">
                     <i data-lucide="list-ordered" class="text-blue-500 w-5 h-5"></i> قائمة الطلبات
                 </h2>
-                <div class="flex gap-2 text-xs">
+                <div class="flex gap-2 text-xs flex-wrap">
+                    <button @click="exportToCSV" title="تصدير CSV" class="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1">
+                        <i data-lucide="download" class="w-3 h-3"></i> CSV
+                    </button>
                     <button @click="filterStatus = 'all'" :class="filterStatus === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">الكل ({{ requests.length }})</button>
                     <button @click="filterStatus = 'pending'" :class="filterStatus === 'pending' ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">قيد ({{ pendingCount }})</button>
                     <button @click="filterStatus = 'resolved'" :class="filterStatus === 'resolved' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'" class="px-3 py-1.5 rounded-lg font-bold transition">منفذ ({{ resolvedCount }})</button>
                 </div>
+            </div>
+            
+            <!-- Search bar -->
+            <div class="mb-4 relative">
+                <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2"></i>
+                <input 
+                    type="text" 
+                    v-model="searchQuery" 
+                    placeholder="ابحث بالاسم أو الرقم أو المبلغ..." 
+                    class="w-full bg-slate-50 border-2 border-slate-100 rounded-xl px-4 py-3 pr-10 text-right font-bold text-sm focus:border-blue-500 outline-none" />
+                <button v-if="searchQuery" @click="searchQuery = ''" class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
             </div>
             
             <div class="grid gap-3 sm:gap-4">
@@ -170,7 +367,13 @@
                                     </button>
                                 </div>
                                 <div class="flex flex-wrap gap-2 sm:gap-4 text-xs sm:text-sm text-slate-500 font-bold">
-                                    <span class="flex items-center gap-1 break-all"><i data-lucide="phone" class="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0"></i> {{ req.teacherNumber }}</span>
+                                    <span class="flex items-center gap-1 break-all">
+                                        <i data-lucide="phone" class="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0"></i> 
+                                        {{ req.teacherNumber }}
+                                        <button @click.stop="copyToClipboard(req.teacherNumber)" title="نسخ" class="text-slate-400 hover:text-blue-600 transition">
+                                            <i data-lucide="copy" class="w-3 h-3"></i>
+                                        </button>
+                                    </span>
                                     <span class="flex items-center gap-1"><i data-lucide="wallet" class="w-3 h-3 sm:w-4 sm:h-4 text-blue-500"></i> {{ req.accountType === 'Insta' ? 'إنستا باي' : 'كاش' }}</span>
                                     <span class="text-base sm:text-lg text-blue-600 font-black">{{ req.value }} ج.م</span>
                                 </div>
@@ -298,13 +501,31 @@
                 <p class="text-center text-xs text-slate-500 mt-1 font-bold">{{ ocrProgress }}%</p>
             </div>
 
-            <div v-if="ocrResultPreview && !isProcessingOCR" class="mb-6 p-4 bg-slate-50 rounded-2xl border-2 border-slate-100">
-                <h4 class="text-sm font-black mb-2 text-slate-700">النص المستخرج:</h4>
-                <pre class="text-[10px] text-slate-600 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono">{{ ocrResultPreview }}</pre>
+            <div v-if="ocrResultPreview && !isProcessingOCR" class="mb-4 p-3 bg-slate-50 rounded-2xl border-2 border-slate-100">
+                <div class="flex justify-between items-center mb-2">
+                    <h4 class="text-sm font-black text-slate-700">النص المستخرج:</h4>
+                    <button @click="showRawText = !showRawText" class="text-blue-600 text-xs font-bold">
+                        {{ showRawText ? 'إخفاء' : 'عرض' }}
+                    </button>
+                </div>
+                <pre v-if="showRawText" class="text-[10px] text-slate-600 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono">{{ ocrResultPreview }}</pre>
+            </div>
+
+            <!-- Manual override toggle -->
+            <div class="mb-4">
+                <label class="flex items-center gap-2 text-sm font-bold text-slate-700 cursor-pointer">
+                    <input type="checkbox" v-model="skipOCR" class="w-4 h-4 rounded" />
+                    تخطي OCR والتأكيد يدوياً (إذا فشلت القراءة)
+                </label>
             </div>
 
             <div class="flex gap-3 sm:gap-4">
-                <button @click="processOCRAndResolve" :disabled="!selectedFile || isProcessingOCR" class="flex-1 bg-blue-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-blue-700 disabled:bg-slate-200 disabled:cursor-not-allowed transition font-black shadow-lg shadow-blue-200 text-sm sm:text-base">تأكيد الحل</button>
+                <button v-if="!skipOCR" @click="processOCRAndResolve" :disabled="!selectedFile || isProcessingOCR" class="flex-1 bg-blue-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-blue-700 disabled:bg-slate-200 disabled:cursor-not-allowed transition font-black shadow-lg shadow-blue-200 text-sm sm:text-base">
+                    <i data-lucide="scan" class="w-4 h-4 inline ml-1"></i> فحص بالـ OCR
+                </button>
+                <button v-else @click="manualResolve" :disabled="!selectedFile || isProcessingOCR" class="flex-1 bg-amber-600 text-white px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-amber-700 disabled:bg-slate-200 disabled:cursor-not-allowed transition font-black shadow-lg text-sm sm:text-base">
+                    <i data-lucide="check" class="w-4 h-4 inline ml-1"></i> تأكيد يدوي
+                </button>
                 <button @click="closeResolveModal" :disabled="isProcessingOCR" class="flex-1 bg-slate-100 text-slate-600 px-4 sm:px-6 py-3 sm:py-4 rounded-2xl hover:bg-slate-200 disabled:opacity-50 transition font-black text-sm sm:text-base">إلغاء</button>
             </div>
         </div>
@@ -393,6 +614,97 @@
             </div>
         </div>
     </div>
+
+    <!-- Statistics Modal -->
+    <div v-if="showStatsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 z-[100]" @click.self="showStatsModal = false">
+        <div class="bg-white rounded-2xl sm:rounded-[2rem] p-5 sm:p-8 max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl">
+            <div class="flex justify-between items-center mb-5 border-b border-slate-100 pb-3">
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <i data-lucide="bar-chart-3" class="w-6 h-6 sm:w-8 sm:h-8 text-blue-600"></i>
+                    <h2 class="text-xl sm:text-2xl font-black text-slate-800">الإحصائيات</h2>
+                </div>
+                <button @click="showStatsModal = false" class="p-2 hover:bg-slate-100 rounded-full transition text-slate-400">
+                    <i data-lucide="x" class="w-5 h-5 sm:w-6 sm:h-6"></i>
+                </button>
+            </div>
+            
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mb-5">
+                <div class="bg-blue-50 border-2 border-blue-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-blue-600 font-bold mb-1">اليوم</p>
+                    <p class="text-lg sm:text-2xl font-black text-blue-700">{{ stats.today.count }}</p>
+                    <p class="text-[10px] sm:text-xs text-blue-600 font-bold">{{ stats.today.amount.toFixed(0) }} ج</p>
+                </div>
+                <div class="bg-emerald-50 border-2 border-emerald-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-emerald-600 font-bold mb-1">هذا الأسبوع</p>
+                    <p class="text-lg sm:text-2xl font-black text-emerald-700">{{ stats.week.count }}</p>
+                    <p class="text-[10px] sm:text-xs text-emerald-600 font-bold">{{ stats.week.amount.toFixed(0) }} ج</p>
+                </div>
+                <div class="bg-amber-50 border-2 border-amber-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-amber-600 font-bold mb-1">هذا الشهر</p>
+                    <p class="text-lg sm:text-2xl font-black text-amber-700">{{ stats.month.count }}</p>
+                    <p class="text-[10px] sm:text-xs text-amber-600 font-bold">{{ stats.month.amount.toFixed(0) }} ج</p>
+                </div>
+                <div class="bg-purple-50 border-2 border-purple-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-purple-600 font-bold mb-1">إجمالي مدفوع</p>
+                    <p class="text-lg sm:text-2xl font-black text-purple-700">{{ stats.total.count }}</p>
+                    <p class="text-[10px] sm:text-xs text-purple-600 font-bold">{{ stats.total.amount.toFixed(0) }} ج</p>
+                </div>
+                <div class="bg-rose-50 border-2 border-rose-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-rose-600 font-bold mb-1">معلق</p>
+                    <p class="text-lg sm:text-2xl font-black text-rose-700">{{ pendingCount }}</p>
+                    <p class="text-[10px] sm:text-xs text-rose-600 font-bold">{{ pendingTotal.toFixed(0) }} ج</p>
+                </div>
+                <div class="bg-slate-50 border-2 border-slate-100 p-3 sm:p-4 rounded-2xl text-center">
+                    <p class="text-[10px] sm:text-xs text-slate-600 font-bold mb-1">متوسط الطلب</p>
+                    <p class="text-lg sm:text-2xl font-black text-slate-700">{{ stats.avgAmount.toFixed(0) }}</p>
+                    <p class="text-[10px] sm:text-xs text-slate-600 font-bold">جنيه</p>
+                </div>
+            </div>
+
+            <!-- Top recipients -->
+            <div v-if="stats.topRecipients.length > 0" class="bg-slate-50 rounded-2xl p-4">
+                <h3 class="text-sm font-black text-slate-700 mb-3 flex items-center gap-2">
+                    <i data-lucide="trophy" class="w-4 h-4 text-amber-500"></i>
+                    أكثر المستفيدين
+                </h3>
+                <div class="space-y-2">
+                    <div v-for="(item, idx) in stats.topRecipients" :key="item.name" class="flex justify-between items-center bg-white p-3 rounded-xl">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-black text-white" :class="['bg-amber-500', 'bg-slate-400', 'bg-orange-600', 'bg-blue-500', 'bg-purple-500'][idx] || 'bg-slate-300'">{{ idx + 1 }}</span>
+                            <span class="text-sm font-bold text-slate-800 truncate">{{ item.name }}</span>
+                        </div>
+                        <div class="flex gap-3 text-xs">
+                            <span class="text-slate-500 font-bold">{{ item.count }} طلب</span>
+                            <span class="text-blue-600 font-black">{{ item.total.toFixed(0) }} ج</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </template>
+    <!-- ===== END MAIN APP ===== -->
+
+    <!-- Toast container (always visible, even on auth screen) -->
+    <div class="fixed top-4 left-4 z-[200] flex flex-col gap-2 max-w-sm" style="pointer-events: none;">
+        <transition-group name="toast" tag="div" class="flex flex-col gap-2">
+            <div v-for="toast in toasts" :key="toast.id" 
+                :class="{
+                    'bg-emerald-600': toast.type === 'success',
+                    'bg-red-600': toast.type === 'error',
+                    'bg-amber-500': toast.type === 'warning',
+                    'bg-blue-600': toast.type === 'info'
+                }"
+                class="text-white px-4 py-3 rounded-2xl shadow-2xl font-bold text-sm flex items-center gap-3"
+                style="pointer-events: auto;">
+                <i :data-lucide="toast.type === 'success' ? 'check-circle' : toast.type === 'error' ? 'x-circle' : toast.type === 'warning' ? 'alert-triangle' : 'info'" class="w-5 h-5 flex-shrink-0"></i>
+                <span class="flex-1">{{ toast.message }}</span>
+                <button @click="dismissToast(toast.id)" class="text-white/80 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </transition-group>
+    </div>
 </div>
 
 <script>
@@ -401,6 +713,71 @@ const { createApp, ref, onMounted, computed, nextTick, watch } = Vue;
 createApp({
     setup() {
         const FIREBASE_URL = 'https://pharmacy-c58d1-default-rtdb.firebaseio.com';
+        
+        // ===== Firebase Auth Configuration =====
+        // ⚠️⚠️⚠️ STOP — YOU MUST REPLACE THESE VALUES ⚠️⚠️⚠️
+        //
+        // 1. Go to: https://console.firebase.google.com
+        // 2. Open your project (pharmacy-c58d1)
+        // 3. Click the gear icon ⚙️ → Project Settings
+        // 4. Scroll to "Your apps" section
+        // 5. If no web app exists, click </> "Add app" → register a Web app
+        // 6. Copy the firebaseConfig object shown and paste its values below
+        //
+        // The error "auth/api-key-not-valid" means you haven't done this yet.
+        const firebaseConfig = {
+		  apiKey: "AIzaSyDOi1lvJJR_kccx13amIzEfeeFWppjj2L8",
+		  authDomain: "pharmacy-c58d1.firebaseapp.com",
+		  databaseURL: "https://pharmacy-c58d1-default-rtdb.firebaseio.com",
+		  projectId: "pharmacy-c58d1",
+		  storageBucket: "pharmacy-c58d1.firebasestorage.app",
+		  messagingSenderId: "318301414468",
+		  appId: "1:318301414468:web:4b381d1631c51c5e498811",
+		  measurementId: "G-REZMCSL24Q"
+		};
+        
+        // Validate config — show clear error if user forgot to replace placeholders
+        const configIsValid = !firebaseConfig.apiKey.includes('PASTE_') 
+            && !firebaseConfig.messagingSenderId.includes('PASTE_')
+            && !firebaseConfig.appId.includes('PASTE_');
+        
+        if (!configIsValid) {
+            // Show a clear setup error instead of the cryptic Firebase error
+            document.body.innerHTML = `
+                <div style="max-width: 600px; margin: 50px auto; padding: 30px; font-family: 'Cairo', sans-serif; text-align: right; direction: rtl; background: #fef2f2; border: 2px solid #fecaca; border-radius: 16px;">
+                    <h2 style="color: #991b1b; font-weight: 900; font-size: 24px; margin-bottom: 16px;">⚠️ إعداد Firebase مطلوب</h2>
+                    <p style="color: #7f1d1d; font-weight: bold; line-height: 1.8; margin-bottom: 16px;">
+                        لم تقم بإدخال بيانات مشروع Firebase الخاص بك بعد. التطبيق لا يستطيع العمل بدونها.
+                    </p>
+                    <ol style="color: #991b1b; font-weight: bold; line-height: 2; padding-right: 20px;">
+                        <li>افتح <a href="https://console.firebase.google.com" target="_blank" style="color: #1d4ed8;">Firebase Console</a></li>
+                        <li>اختر مشروعك → ⚙️ Project Settings</li>
+                        <li>اسحب لأسفل إلى "Your apps" — أضف Web app إذا لم يكن موجوداً</li>
+                        <li>انسخ قيم <code style="background: #fee2e2; padding: 2px 6px; border-radius: 4px;">firebaseConfig</code></li>
+                        <li>افتح ملف HTML وابحث عن "PASTE_YOUR_API_KEY_HERE" واستبدلها</li>
+                    </ol>
+                </div>`;
+            throw new Error('Firebase config not set');
+        }
+        
+        // Initialize Firebase (guarded for hot-reload)
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        
+        // ===== Auth State =====
+        const isAuthenticated = ref(false);
+        const authLoading = ref(true);
+        const currentUser = ref(null);
+        const idToken = ref(null);          // Firebase ID token used for authenticated DB requests
+        const authMode = ref('login');      // kept for backward compat (always 'login' now)
+        const authEmail = ref('');
+        const authPassword = ref('');
+        const showPassword = ref(false);
+        const rememberMe = ref(true);
+        const authError = ref('');
+        const authProcessing = ref(false);
 
         const role = ref('User');
         const balance = ref(0);
@@ -431,6 +808,15 @@ createApp({
         const currentRequest = ref({ teacherName: '', teacherNumber: '', accountType: 'Insta', value: '' });
         const editingRequestId = ref(null);
         const originalEditValue = ref(0);
+        
+        // ===== New UI features state =====
+        const darkMode = ref(false);
+        const showStatsModal = ref(false);
+        const searchQuery = ref('');
+        const skipOCR = ref(false);
+        const showRawText = ref(false);
+        const toasts = ref([]);
+        let toastIdCounter = 0;
 
         // ===== Phone Number Normalization Helpers =====
         // Strips dashes, spaces, dots, parentheses, plus signs, and country code prefixes.
@@ -522,6 +908,19 @@ createApp({
                 filtered = filtered.filter(r => r.status === filterStatus.value);
             }
             
+            // Apply search filter
+            if (searchQuery.value.trim()) {
+                const q = searchQuery.value.trim().toLowerCase();
+                const qDigits = q.replace(/\D/g, '');
+                filtered = filtered.filter(r => {
+                    const nameMatch = (r.teacherName || '').toLowerCase().includes(q);
+                    const numMatch = (r.teacherNumber || '').toLowerCase().includes(q);
+                    const numDigitsMatch = qDigits && normalizePhone(r.teacherNumber).includes(qDigits);
+                    const valueMatch = r.value && r.value.toString().includes(q);
+                    return nameMatch || numMatch || numDigitsMatch || valueMatch;
+                });
+            }
+            
             // Sort: pending first (newest first), then resolved (newest first by resolvedAt or createdAt)
             filtered.sort((a, b) => {
                 // Pending always before resolved
@@ -543,8 +942,67 @@ createApp({
         });
 
         const totalFiltered = computed(() => {
-            if (filterStatus.value === 'all') return requests.value.length;
-            return requests.value.filter(r => r.status === filterStatus.value).length;
+            let filtered = requests.value;
+            if (filterStatus.value !== 'all') {
+                filtered = filtered.filter(r => r.status === filterStatus.value);
+            }
+            if (searchQuery.value.trim()) {
+                const q = searchQuery.value.trim().toLowerCase();
+                const qDigits = q.replace(/\D/g, '');
+                filtered = filtered.filter(r => {
+                    const nameMatch = (r.teacherName || '').toLowerCase().includes(q);
+                    const numMatch = (r.teacherNumber || '').toLowerCase().includes(q);
+                    const numDigitsMatch = qDigits && normalizePhone(r.teacherNumber).includes(qDigits);
+                    const valueMatch = r.value && r.value.toString().includes(q);
+                    return nameMatch || numMatch || numDigitsMatch || valueMatch;
+                });
+            }
+            return filtered.length;
+        });
+
+        // ===== Statistics =====
+        const stats = computed(() => {
+            const now = new Date();
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const weekStart = new Date(todayStart);
+            weekStart.setDate(weekStart.getDate() - 7);
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            
+            const resolved = requests.value.filter(r => r.status === 'resolved');
+            
+            const inRange = (req, start) => {
+                const d = new Date(req.resolvedAt || req.createdAt || 0);
+                return d >= start;
+            };
+            
+            const todayList = resolved.filter(r => inRange(r, todayStart));
+            const weekList = resolved.filter(r => inRange(r, weekStart));
+            const monthList = resolved.filter(r => inRange(r, monthStart));
+            
+            const sumOf = (arr) => arr.reduce((s, r) => s + parseFloat(r.value || 0), 0);
+            
+            // Top recipients
+            const recipientMap = {};
+            resolved.forEach(r => {
+                const key = r.teacherName || 'غير محدد';
+                if (!recipientMap[key]) {
+                    recipientMap[key] = { name: key, count: 0, total: 0 };
+                }
+                recipientMap[key].count += 1;
+                recipientMap[key].total += parseFloat(r.value || 0);
+            });
+            const topRecipients = Object.values(recipientMap)
+                .sort((a, b) => b.total - a.total)
+                .slice(0, 5);
+            
+            return {
+                today: { count: todayList.length, amount: sumOf(todayList) },
+                week: { count: weekList.length, amount: sumOf(weekList) },
+                month: { count: monthList.length, amount: sumOf(monthList) },
+                total: { count: resolved.length, amount: sumOf(resolved) },
+                avgAmount: resolved.length > 0 ? sumOf(resolved) / resolved.length : 0,
+                topRecipients
+            };
         });
 
         const hasMoreToShow = computed(() => totalFiltered.value > displayLimit.value);
@@ -554,15 +1012,32 @@ createApp({
             [...logs.value].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
         );
 
+        // ===== Authenticated URL builder =====
+        // Appends ?auth=<idToken> to every Firebase REST request so the database
+        // rules can check `auth != null` and reject unauthenticated calls.
+        const authUrl = (path) => {
+            const sep = path.includes('?') ? '&' : '?';
+            return `${FIREBASE_URL}${path}${idToken.value ? sep + 'auth=' + idToken.value : ''}`;
+        };
+
         // ===== Data Loading =====
         const loadData = async () => {
+            // Skip loading if not authenticated yet
+            if (!isAuthenticated.value || !idToken.value) return;
+            
             try {
                 const [resB, resR, resF, resL] = await Promise.all([
-                    fetch(`${FIREBASE_URL}/balance.json`),
-                    fetch(`${FIREBASE_URL}/requests.json`),
-                    fetch(`${FIREBASE_URL}/favorites.json`),
-                    fetch(`${FIREBASE_URL}/logs.json`)
+                    fetch(authUrl('/balance.json')),
+                    fetch(authUrl('/requests.json')),
+                    fetch(authUrl('/favorites.json')),
+                    fetch(authUrl('/logs.json'))
                 ]);
+                
+                // Detect auth errors (token expired, etc.)
+                if (resB.status === 401 || resB.status === 403) {
+                    await refreshIdToken();
+                    return;
+                }
                 
                 balance.value = await resB.json() || 0;
                 
@@ -580,10 +1055,192 @@ createApp({
         };
 
         const addLog = async (action, details) => {
-            const log = { timestamp: new Date().toISOString(), role: role.value, action, details };
-            await fetch(`${FIREBASE_URL}/logs.json`, { method: 'POST', body: JSON.stringify(log) });
+            const log = { 
+                timestamp: new Date().toISOString(), 
+                role: role.value, 
+                action, 
+                details,
+                userEmail: currentUser.value?.email || 'unknown',
+                userId: currentUser.value?.uid || 'unknown'
+            };
+            await fetch(authUrl('/logs.json'), { method: 'POST', body: JSON.stringify(log) });
             await loadData();
         };
+
+        // ===== Authentication Methods =====
+        
+        // Refresh ID token (Firebase tokens expire every 1 hour)
+        const refreshIdToken = async () => {
+            const user = auth.currentUser;
+            if (!user) {
+                isAuthenticated.value = false;
+                return null;
+            }
+            try {
+                const token = await user.getIdToken(true); // force refresh
+                idToken.value = token;
+                return token;
+            } catch (e) {
+                console.error('Token refresh failed:', e);
+                isAuthenticated.value = false;
+                return null;
+            }
+        };
+        
+        // Determine role from email or admin claim
+        // Admin emails should be configured here OR set via Firebase custom claims
+        const ADMIN_EMAILS = [
+            // Add admin emails here, e.g.:
+            // 'admin@example.com',
+        ];
+        
+        const determineRole = async (user) => {
+            if (!user) return 'User';
+            
+            // Strategy 1: Check email allowlist
+            if (ADMIN_EMAILS.includes(user.email?.toLowerCase())) return 'Admin';
+            
+            // Strategy 2: Check Firebase custom claims (set via Admin SDK)
+            try {
+                const idTokenResult = await user.getIdTokenResult();
+                if (idTokenResult.claims.admin === true) return 'Admin';
+            } catch (e) { console.warn('Claims check failed:', e); }
+            
+            // Strategy 3: Legacy URL parameter (kept for backward compatibility)
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('Admin') !== null && ADMIN_EMAILS.includes(user.email?.toLowerCase())) {
+                return 'Admin';
+            }
+            
+            return 'User';
+        };
+
+        // Translate Firebase auth error codes into Arabic messages
+        const translateAuthError = (code) => {
+            const messages = {
+                'auth/invalid-email': 'البريد الإلكتروني غير صحيح',
+                'auth/user-disabled': 'هذا الحساب معطّل من قِبَل المسؤول',
+                'auth/user-not-found': 'لا يوجد حساب بهذا البريد. تواصل مع المسؤول لإنشاء حساب',
+                'auth/wrong-password': 'كلمة المرور غير صحيحة',
+                'auth/invalid-credential': 'البريد أو كلمة المرور غير صحيحة',
+                'auth/network-request-failed': 'خطأ في الاتصال بالشبكة',
+                'auth/too-many-requests': 'محاولات كثيرة، حاول لاحقاً',
+                'auth/operation-not-allowed': 'تسجيل الدخول بالبريد غير مفعّل في Firebase',
+                'auth/missing-password': 'يرجى إدخال كلمة المرور',
+                'auth/api-key-not-valid': 'إعداد Firebase غير صحيح، تواصل مع المطور',
+                'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'إعداد Firebase غير صحيح، تواصل مع المطور',
+            };
+            return messages[code] || `خطأ: ${code}`;
+        };
+
+        // Handle login or signup based on current mode
+        const handleAuthSubmit = async () => {
+            authError.value = '';
+            
+            // Validation
+            if (!authEmail.value || !authPassword.value) {
+                authError.value = 'يرجى ملء البريد وكلمة المرور';
+                return;
+            }
+            
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(authEmail.value.trim())) {
+                authError.value = 'صيغة البريد الإلكتروني غير صحيحة';
+                return;
+            }
+            
+            authProcessing.value = true;
+            
+            try {
+                // Set persistence based on "Remember me"
+                // LOCAL = persists even after browser close
+                // SESSION = cleared when browser closes
+                const persistence = rememberMe.value 
+                    ? firebase.auth.Auth.Persistence.LOCAL 
+                    : firebase.auth.Auth.Persistence.SESSION;
+                await auth.setPersistence(persistence);
+                
+                // Login only — signup is intentionally disabled.
+                // Accounts are created exclusively from Firebase Console.
+                await auth.signInWithEmailAndPassword(authEmail.value.trim(), authPassword.value);
+                showToast('تم تسجيل الدخول بنجاح', 'success');
+                
+                // onAuthStateChanged will handle the rest (setting user, loading data, etc.)
+                authPassword.value = '';
+            } catch (e) {
+                console.error('Auth error:', e);
+                authError.value = translateAuthError(e.code);
+            } finally {
+                authProcessing.value = false;
+            }
+        };
+
+        // Forgot password
+        const handleForgotPassword = async () => {
+            authError.value = '';
+            const email = authEmail.value.trim();
+            if (!email) {
+                authError.value = 'أدخل بريدك الإلكتروني أولاً';
+                return;
+            }
+            try {
+                await auth.sendPasswordResetEmail(email);
+                showToast(`تم إرسال رابط إعادة تعيين كلمة المرور إلى ${email}`, 'success', 5000);
+            } catch (e) {
+                authError.value = translateAuthError(e.code);
+            }
+        };
+
+        // Logout
+        const handleLogout = async () => {
+            if (!confirm('هل تريد تسجيل الخروج؟')) return;
+            try {
+                await auth.signOut();
+                showToast('تم تسجيل الخروج', 'info');
+                // onAuthStateChanged handles cleanup
+            } catch (e) {
+                showToast('خطأ في تسجيل الخروج', 'error');
+            }
+        };
+
+        // Listen for auth state changes (handles login, logout, token refresh, page reload)
+        auth.onAuthStateChanged(async (user) => {
+            authLoading.value = false;
+            if (user) {
+                currentUser.value = user;
+                idToken.value = await user.getIdToken();
+                role.value = await determineRole(user);
+                isAuthenticated.value = true;
+                
+                // Auto-refresh token every 50 minutes (tokens expire after 60 min)
+                user.getIdToken().then(t => idToken.value = t);
+                
+                await loadData();
+                
+                // Process URL balance ops only after login
+                await handleUrlBalanceOperations();
+                
+                nextTick(() => { if (window.lucide) lucide.createIcons(); });
+            } else {
+                currentUser.value = null;
+                idToken.value = null;
+                isAuthenticated.value = false;
+                role.value = 'User';
+                // Clear sensitive data
+                requests.value = [];
+                favorites.value = [];
+                logs.value = [];
+                balance.value = 0;
+                nextTick(() => { if (window.lucide) lucide.createIcons(); });
+            }
+        });
+        
+        // Auto-refresh ID token every 50 min to avoid expiry mid-session
+        setInterval(async () => {
+            if (auth.currentUser) {
+                await refreshIdToken();
+            }
+        }, 50 * 60 * 1000);
 
         // ===== UI Handlers =====
         const toggleLogs = () => {
@@ -613,7 +1270,7 @@ createApp({
             const newVal = parseFloat(newBalanceVal.value);
             if (isNaN(newVal)) return;
             if (!confirm(`هل أنت متأكد من تغيير الرصيد إلى ${newVal} جنيه؟`)) return;
-            await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(newVal) });
+            await fetch(authUrl(`/balance.json`), { method: 'PUT', body: JSON.stringify(newVal) });
             await addLog('تعديل الرصيد', `تم تغيير الرصيد يدوياً إلى ${newVal} ج`);
             showEditBalanceModal.value = false;
             await loadData();
@@ -621,10 +1278,14 @@ createApp({
 
         const handleDeposit = async () => {
             const amount = parseFloat(depositAmount.value);
-            if (!amount || amount <= 0) return;
+            if (!amount || amount <= 0) {
+                showToast('أدخل مبلغ صحيح', 'warning');
+                return;
+            }
             const nb = balance.value + amount;
-            await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(nb) });
+            await fetch(authUrl(`/balance.json`), { method: 'PUT', body: JSON.stringify(nb) });
             await addLog('إيداع رصيد', `إضافة مبلغ ${amount} ج`);
+            showToast(`تم إيداع ${amount} ج`, 'success');
             showDepositModal.value = false;
             depositAmount.value = '';
             await loadData();
@@ -653,13 +1314,13 @@ createApp({
         // ===== FIX 4: Balance validation when creating requests =====
         const handleCreateRequest = async () => {
             if (!currentRequest.value.teacherName || !currentRequest.value.teacherNumber || !currentRequest.value.value) {
-                alert('يرجى ملء جميع الحقول');
+                showToast('يرجى ملء جميع الحقول', 'warning');
                 return;
             }
             
             const reqValue = parseFloat(currentRequest.value.value);
             if (isNaN(reqValue) || reqValue <= 0) {
-                alert('المبلغ غير صحيح');
+                showToast('المبلغ غير صحيح', 'error');
                 return;
             }
 
@@ -680,20 +1341,22 @@ createApp({
             };
             
             if (editingRequestId.value) {
-                await fetch(`${FIREBASE_URL}/requests/${editingRequestId.value}.json`, { method: 'PUT', body: JSON.stringify(data) });
+                await fetch(authUrl(`/requests/${editingRequestId.value}.json`), { method: 'PUT', body: JSON.stringify(data) });
             } else {
-                await fetch(`${FIREBASE_URL}/requests.json`, { method: 'POST', body: JSON.stringify(data) });
+                await fetch(authUrl(`/requests.json`), { method: 'POST', body: JSON.stringify(data) });
             }
             
             await addLog(editingRequestId.value ? 'تعديل طلب' : 'إنشاء طلب', `المعلم: ${data.teacherName} بمبلغ ${data.value}`);
+            showToast(editingRequestId.value ? 'تم تعديل الطلب' : 'تم إنشاء الطلب بنجاح', 'success');
             closeRequestModal();
             await loadData();
         };
 
         const handleDeleteRequest = async (id, req) => {
             if (!confirm('حذف هذا الطلب نهائياً؟')) return;
-            await fetch(`${FIREBASE_URL}/requests/${id}.json`, { method: 'DELETE' });
+            await fetch(authUrl(`/requests/${id}.json`), { method: 'DELETE' });
             await addLog('حذف طلب', `تم حذف طلب المعلم: ${req.teacherName}`);
+            showToast('تم حذف الطلب', 'success');
             await loadData();
         };
 
@@ -712,7 +1375,7 @@ createApp({
             );
 
             if (existingFav) {
-                await fetch(`${FIREBASE_URL}/favorites/${existingFav.id}.json`, { method: 'DELETE' });
+                await fetch(authUrl(`/favorites/${existingFav.id}.json`), { method: 'DELETE' });
                 await addLog('إزالة من المفضلة', `تمت إزالة ${req.teacherName} من المفضلة`);
             } else {
                 const favData = {
@@ -722,7 +1385,7 @@ createApp({
                     value: req.value,
                     addedAt: new Date().toISOString()
                 };
-                await fetch(`${FIREBASE_URL}/favorites.json`, { method: 'POST', body: JSON.stringify(favData) });
+                await fetch(authUrl(`/favorites.json`), { method: 'POST', body: JSON.stringify(favData) });
                 await addLog('إضافة للمفضلة', `تمت إضافة ${req.teacherName} للمفضلة`);
             }
             await loadData();
@@ -730,7 +1393,7 @@ createApp({
 
         const removeFavorite = async (favId) => {
             if (!confirm('إزالة من المفضلة؟')) return;
-            await fetch(`${FIREBASE_URL}/favorites/${favId}.json`, { method: 'DELETE' });
+            await fetch(authUrl(`/favorites/${favId}.json`), { method: 'DELETE' });
             await loadData();
         };
 
@@ -792,6 +1455,8 @@ createApp({
             imagePreview.value = '';
             ocrResultPreview.value = '';
             ocrProgress.value = 0;
+            skipOCR.value = false;
+            showRawText.value = false;
         };
 
         const handleImageSelection = (e) => {
@@ -843,22 +1508,79 @@ createApp({
                 ocrResultPreview.value = text;
                 console.log('OCR Text:', text);
                 
-                // ===== FIX 2: Better number parsing with comma support =====
-                // Match amounts like "1,500 EGP" or "1500 EGP" or "1,500.00 EGP"
+                // ===== FIX: Robust amount extraction =====
+                // Strategy: try multiple OCR-tolerant patterns + fallback heuristics.
+                // Common OCR issues: EGP read as "ECP/EQP/FGP/E6P", Arabic-Indic digits,
+                // line breaks between number and currency, spaces inside numbers.
+                
+                // Step 1: Normalize the text for amount extraction
+                let amountText = text;
+                
+                // Convert Arabic-Indic digits (٠-٩) to Western digits (0-9)
+                const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+                const easternArabicDigits = '۰۱۲۳۴۵۶۷۸۹'; // Persian/Urdu variants
+                amountText = amountText.replace(/[٠-٩]/g, d => arabicDigits.indexOf(d).toString());
+                amountText = amountText.replace(/[۰-۹]/g, d => easternArabicDigits.indexOf(d).toString());
+                
+                // Step 2: Try explicit currency-tagged patterns (most reliable)
                 let ocrAmount = 0;
                 const amountPatterns = [
-                    /([\d,]+\.?\d*)\s*EGP/i,           // "1,500 EGP" or "1500.00 EGP"
-                    /EGP\s*([\d,]+\.?\d*)/i,           // "EGP 1,500"
-                    /([\d,]+\.?\d*)\s*(?:جنيه|ج\.م|ج)/i, // Arabic
-                    /Amount[:\s]+([\d,]+\.?\d*)/i,     // "Amount: 1,500"
+                    // EGP variants — handles common OCR misreads of "EGP"
+                    /([\d,]+(?:\.\d+)?)\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG|GP|EG)/i,
+                    /(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)\s*([\d,]+(?:\.\d+)?)/i,
+                    
+                    // Arabic currency
+                    /([\d,]+(?:\.\d+)?)\s*(?:جنيه|ج\.?م|جم|ج)/,
+                    /(?:جنيه|ج\.?م|جم)\s*([\d,]+(?:\.\d+)?)/,
+                    
+                    // Labeled "Amount" (common on InstaPay/Vodafone Cash)
+                    /(?:Amount|المبلغ|Total|Paid)[:\s]*([\d,]+(?:\.\d+)?)/i,
+                    
+                    // Amount on its own line followed by EGP-like word on next line
+                    /([\d,]+(?:\.\d+)?)\s*\n\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP)/i,
+                    
+                    // Number with decimal (.00 / .50 etc) — strong signal it's currency
+                    /\b([\d,]{1,10}\.\d{2})\b/,
                 ];
                 
+                const foundAmounts = [];
                 for (const pattern of amountPatterns) {
-                    const match = text.match(pattern);
-                    if (match) {
-                        // Remove commas before parsing
-                        ocrAmount = parseFloat(match[1].replace(/,/g, ''));
-                        if (!isNaN(ocrAmount) && ocrAmount > 0) break;
+                    const matches = [...amountText.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))];
+                    for (const match of matches) {
+                        if (match[1]) {
+                            const cleaned = match[1].replace(/,/g, '');
+                            const val = parseFloat(cleaned);
+                            if (!isNaN(val) && val > 0 && val < 10000000) {
+                                foundAmounts.push(val);
+                            }
+                        }
+                    }
+                }
+                
+                // Step 3: If we found candidates, prefer one that matches the request value
+                const requestedAmount = parseFloat(activeReqToResolve.value.value);
+                if (foundAmounts.length > 0) {
+                    // Try exact match first
+                    const exactMatch = foundAmounts.find(a => Math.abs(a - requestedAmount) < 0.01);
+                    if (exactMatch !== undefined) {
+                        ocrAmount = exactMatch;
+                    } else {
+                        // Otherwise use the first/largest candidate
+                        // (largest is usually the transaction total, not fees/balance)
+                        ocrAmount = Math.max(...foundAmounts);
+                    }
+                }
+                
+                // Step 4: Fallback — find any standalone number near currency-related words
+                if (ocrAmount === 0) {
+                    // Find all numbers ≥ 1 in the text and pick one matching the requested amount
+                    const allNumbers = [...amountText.matchAll(/\b([\d,]+(?:\.\d+)?)\b/g)]
+                        .map(m => parseFloat(m[1].replace(/,/g, '')))
+                        .filter(n => !isNaN(n) && n > 0 && n < 10000000);
+                    
+                    const exactMatch = allNumbers.find(a => Math.abs(a - requestedAmount) < 0.01);
+                    if (exactMatch !== undefined) {
+                        ocrAmount = exactMatch;
                     }
                 }
                 
@@ -952,8 +1674,8 @@ createApp({
                 }
 
                 const newBal = balance.value - parseFloat(activeReqToResolve.value.value);
-                await fetch(`${FIREBASE_URL}/balance.json`, { method: 'PUT', body: JSON.stringify(newBal) });
-                await fetch(`${FIREBASE_URL}/requests/${activeReqToResolve.value.id}.json`, { 
+                await fetch(authUrl(`/balance.json`), { method: 'PUT', body: JSON.stringify(newBal) });
+                await fetch(authUrl(`/requests/${activeReqToResolve.value.id}.json`), { 
                     method: 'PATCH', 
                     body: JSON.stringify({ 
                         status: 'resolved', 
@@ -977,6 +1699,149 @@ createApp({
             }
         };
 
+        // ===== Toast notification system =====
+        const showToast = (message, type = 'info', duration = 3500) => {
+            const id = ++toastIdCounter;
+            toasts.value.push({ id, message, type });
+            setTimeout(() => dismissToast(id), duration);
+            nextTick(() => { if (window.lucide) lucide.createIcons(); });
+        };
+        
+        const dismissToast = (id) => {
+            const idx = toasts.value.findIndex(t => t.id === id);
+            if (idx !== -1) toasts.value.splice(idx, 1);
+        };
+
+        // Open stats modal with icon refresh
+        const openStatsModal = () => {
+            showStatsModal.value = true;
+            nextTick(() => { if (window.lucide) lucide.createIcons(); });
+        };
+
+        // ===== Dark mode =====
+        const applyDarkMode = () => {
+            if (darkMode.value) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        };
+        
+        const toggleDarkMode = () => {
+            darkMode.value = !darkMode.value;
+            try { localStorage.setItem('darkMode', darkMode.value ? '1' : '0'); } catch(e) {}
+            applyDarkMode();
+            nextTick(() => lucide.createIcons());
+        };
+
+        // ===== Copy to clipboard =====
+        const copyToClipboard = async (text) => {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(`تم نسخ: ${text}`, 'success');
+            } catch (e) {
+                // Fallback for older browsers
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); showToast(`تم نسخ: ${text}`, 'success'); }
+                catch (err) { showToast('فشل النسخ', 'error'); }
+                document.body.removeChild(ta);
+            }
+        };
+
+        // ===== Export to CSV =====
+        const exportToCSV = () => {
+            if (requests.value.length === 0) {
+                showToast('لا توجد طلبات للتصدير', 'warning');
+                return;
+            }
+            
+            const headers = ['التاريخ', 'الاسم', 'الرقم/الإيميل', 'النوع', 'المبلغ', 'الحالة', 'تاريخ التنفيذ', 'المرجع'];
+            const rows = [...requests.value]
+                .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+                .map(r => [
+                    formatDate(r.createdAt) || '',
+                    r.teacherName || '',
+                    r.teacherNumber || '',
+                    r.accountType === 'Insta' ? 'إنستا باي' : 'محفظة',
+                    r.value || 0,
+                    r.status === 'resolved' ? 'مكتمل' : 'قيد المراجعة',
+                    r.resolvedAt ? formatDate(r.resolvedAt) : '',
+                    r.ocrData?.reference || ''
+                ]);
+            
+            // Build CSV with UTF-8 BOM for Excel Arabic support
+            const csv = '\uFEFF' + [headers, ...rows]
+                .map(row => row.map(cell => {
+                    const s = String(cell).replace(/"/g, '""');
+                    return /[",\n]/.test(s) ? `"${s}"` : s;
+                }).join(','))
+                .join('\n');
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `payments_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('تم تصدير الملف بنجاح', 'success');
+        };
+
+        // ===== Manual resolve (skip OCR) =====
+        const manualResolve = async () => {
+            if (!selectedFile.value) return;
+            
+            if (!confirm(
+                `⚠️ تأكيد يدوي بدون فحص OCR\n\n` +
+                `سيتم خصم ${activeReqToResolve.value.value} ج من الرصيد\n` +
+                `للمعلم: ${activeReqToResolve.value.teacherName}\n\n` +
+                `هل أنت متأكد؟`
+            )) return;
+            
+            isProcessingOCR.value = true;
+            try {
+                const newBal = balance.value - parseFloat(activeReqToResolve.value.value);
+                await fetch(authUrl(`/balance.json`), { method: 'PUT', body: JSON.stringify(newBal) });
+                
+                const manualData = {
+                    reference: 'MANUAL',
+                    amount: activeReqToResolve.value.value,
+                    phone: activeReqToResolve.value.teacherNumber,
+                    date: new Date().toLocaleString('ar-EG'),
+                    requestedAmount: activeReqToResolve.value.value,
+                    requestedPhone: activeReqToResolve.value.teacherNumber,
+                    amountMatches: true,
+                    phoneMatches: true,
+                    hasError: false,
+                    manuallyConfirmed: true
+                };
+                
+                await fetch(authUrl(`/requests/${activeReqToResolve.value.id}.json`), { 
+                    method: 'PATCH', 
+                    body: JSON.stringify({ 
+                        status: 'resolved', 
+                        ocrData: manualData,
+                        resolvedAt: new Date().toISOString()
+                    }) 
+                });
+                
+                await addLog('تم الدفع (يدوي)', `دفع ${activeReqToResolve.value.value} ج للمعلم ${activeReqToResolve.value.teacherName} بدون OCR`);
+                showToast('تم تأكيد العملية يدوياً', 'success');
+                closeResolveModal();
+                await loadData();
+            } catch (e) {
+                showToast('خطأ في التأكيد: ' + e.message, 'error');
+            } finally {
+                isProcessingOCR.value = false;
+            }
+        };
+
         const formatDate = (ts) => {
             if (!ts) return '-';
             try {
@@ -994,6 +1859,9 @@ createApp({
 
         // Reset display limit when filter changes
         watch(filterStatus, () => {
+            displayLimit.value = 20;
+        });
+        watch(searchQuery, () => {
             displayLimit.value = 20;
         });
 
@@ -1066,7 +1934,7 @@ createApp({
                     }
                     
                     const newBalance = balance.value + amount;
-                    await fetch(`${FIREBASE_URL}/balance.json`, { 
+                    await fetch(authUrl(`/balance.json`), { 
                         method: 'PUT', 
                         body: JSON.stringify(newBalance) 
                     });
@@ -1106,7 +1974,7 @@ createApp({
                         return;
                     }
                     
-                    await fetch(`${FIREBASE_URL}/balance.json`, { 
+                    await fetch(authUrl(`/balance.json`), { 
                         method: 'PUT', 
                         body: JSON.stringify(amount) 
                     });
@@ -1150,28 +2018,43 @@ createApp({
         };
 
         onMounted(async () => {
-            const params = new URLSearchParams(window.location.search);
-            role.value = params.get('Admin') !== null ? 'Admin' : 'User';
-            await loadData();
+            // Load dark mode preference (works on auth screen too)
+            try {
+                darkMode.value = localStorage.getItem('darkMode') === '1';
+                applyDarkMode();
+            } catch(e) {}
             
-            // Handle GET request balance operations
-            await handleUrlBalanceOperations();
+            // Render initial icons (for auth screen)
+            nextTick(() => { if (window.lucide) lucide.createIcons(); });
             
-            setInterval(loadData, 20000);
+            // Note: data loading and URL balance ops are now triggered by
+            // auth.onAuthStateChanged when the user successfully signs in.
+            
+            // Auto-refresh data while authenticated
+            setInterval(() => {
+                if (isAuthenticated.value) loadData();
+            }, 20000);
         });
 
         return {
             role, balance, requests, logs, favorites, displayLimit, filterStatus,
             showLogsModal, showResolveModal, showDepositModal, showEditBalanceModal, showRequestModal, showAllFavorites,
+            showStatsModal, darkMode, searchQuery, skipOCR, showRawText, toasts,
+            // Auth state
+            isAuthenticated, authLoading, currentUser, authEmail, authPassword, 
+            showPassword, rememberMe, authError, authProcessing,
+            // Auth methods
+            handleAuthSubmit, handleForgotPassword, handleLogout,
             selectedFile, selectedFileName, imagePreview, isProcessingOCR, ocrProgress, ocrStatus, ocrResultPreview,
             depositAmount, newBalanceVal, currentRequest, editingRequestId, originalEditValue,
             pendingTotal, availableBalance, pendingCount, resolvedCount, canSubmitRequest,
-            hasMoreToShow, remainingCount,
+            hasMoreToShow, remainingCount, stats,
             handleDeposit, openEditBalance, handleUpdateBalance, toggleLogs, shareBalance,
             openRequestModal, closeRequestModal, handleCreateRequest, handleDeleteRequest,
-            openResolveModal, closeResolveModal, handleImageSelection, processOCRAndResolve,
+            openResolveModal, closeResolveModal, handleImageSelection, processOCRAndResolve, manualResolve,
             isFavorite, toggleFavorite, removeFavorite, createFromFavorite, openPaymentApp,
             sortedLogs, filteredRequests,
+            toggleDarkMode, copyToClipboard, exportToCSV, dismissToast, showToast, openStatsModal,
             formatDate
         }
     }
