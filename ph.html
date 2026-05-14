@@ -1475,7 +1475,7 @@ createApp({
             }
         };
 
-        // ===== FIX 2: Local OCR with Tesseract.js + Comma handling =====
+        // ===== FIX 2: Local OCR with Tesseract.js + Improved amount detection =====
         const processOCRAndResolve = async () => {
             if (!selectedFile.value) return;
             isProcessingOCR.value = true;
@@ -1509,79 +1509,99 @@ createApp({
                 ocrResultPreview.value = text;
                 console.log('OCR Text:', text);
                 
-                // ===== FIX: Robust amount extraction =====
-                // Strategy: try multiple OCR-tolerant patterns + fallback heuristics.
-                // Common OCR issues: EGP read as "ECP/EQP/FGP/E6P", Arabic-Indic digits,
-                // line breaks between number and currency, spaces inside numbers.
+                // ===================================================================
+                // ===== AMOUNT EXTRACTION (FIXED FOR INSTAPAY/IPN RECEIPTS) =====
+                // ===================================================================
+                // Problem solved here: On these receipts the big amount ("200", "1,200")
+                // is rendered in a large font and "EGP" sits next to it in a different
+                // size/color, so Tesseract often puts the number and "EGP" on SEPARATE
+                // lines. The previous regex required them adjacent on the same line and
+                // therefore never matched. Also the longest number on the receipt is the
+                // 12-digit Reference number, which must never be mistaken for the amount.
                 
-                // Step 1: Normalize the text for amount extraction
+                // Step 1: Normalize text — convert Arabic-Indic digits to Western digits
                 let amountText = text;
-                
-                // Convert Arabic-Indic digits (٠-٩) to Western digits (0-9)
                 const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
                 const easternArabicDigits = '۰۱۲۳۴۵۶۷۸۹'; // Persian/Urdu variants
                 amountText = amountText.replace(/[٠-٩]/g, d => arabicDigits.indexOf(d).toString());
                 amountText = amountText.replace(/[۰-۹]/g, d => easternArabicDigits.indexOf(d).toString());
                 
-                // Step 2: Try explicit currency-tagged patterns (most reliable)
                 let ocrAmount = 0;
-                const amountPatterns = [
-                    // EGP variants — handles common OCR misreads of "EGP"
-                    /([\d,]+(?:\.\d+)?)\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG|GP|EG)/i,
-                    /(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)\s*([\d,]+(?:\.\d+)?)/i,
-                    
-                    // Arabic currency
-                    /([\d,]+(?:\.\d+)?)\s*(?:جنيه|ج\.?م|جم|ج)/,
-                    /(?:جنيه|ج\.?م|جم)\s*([\d,]+(?:\.\d+)?)/,
-                    
-                    // Labeled "Amount" (common on InstaPay/Vodafone Cash)
-                    /(?:Amount|المبلغ|Total|Paid)[:\s]*([\d,]+(?:\.\d+)?)/i,
-                    
-                    // Amount on its own line followed by EGP-like word on next line
-                    /([\d,]+(?:\.\d+)?)\s*\n\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP)/i,
-                    
-                    // Number with decimal (.00 / .50 etc) — strong signal it's currency
-                    /\b([\d,]{1,10}\.\d{2})\b/,
-                ];
-                
                 const foundAmounts = [];
-                for (const pattern of amountPatterns) {
-                    const matches = [...amountText.matchAll(new RegExp(pattern.source, pattern.flags + 'g'))];
-                    for (const match of matches) {
-                        if (match[1]) {
-                            const cleaned = match[1].replace(/,/g, '');
-                            const val = parseFloat(cleaned);
-                            if (!isNaN(val) && val > 0 && val < 10000000) {
-                                foundAmounts.push(val);
-                            }
-                        }
-                    }
-                }
                 
-                // Step 3: If we found candidates, prefer one that matches the request value
+                // Helper: validate + collect a candidate amount
+                const pushAmount = (raw) => {
+                    if (raw === undefined || raw === null) return;
+                    const cleaned = String(raw).replace(/,/g, '').trim();
+                    const val = parseFloat(cleaned);
+                    // Real transfer amounts are positive and below 1,000,000
+                    if (!isNaN(val) && val > 0 && val < 1000000) foundAmounts.push(val);
+                };
+                
+                // --- 2a. "Transfer Amount" anchor (MOST reliable for these receipts) ---
+                // The amount always appears immediately ABOVE the words "Transfer Amount".
+                // "EGP" between them is optional and may be on its own line.
+                const transferAnchor = amountText.match(
+                    /([\d,]+(?:\.\d{1,2})?)\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)?\s*\n?\s*Transfer\s*Amount/i
+                );
+                if (transferAnchor) pushAmount(transferAnchor[1]);
+                
+                // --- 2b. EGP-tagged: number on the SAME line as EGP ---
+                [...amountText.matchAll(
+                    /([\d,]+(?:\.\d{1,2})?)\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)\b/gi
+                )].forEach(m => pushAmount(m[1]));
+                
+                // --- 2c. EGP-tagged: number on the line right BEFORE "EGP" ---
+                // This is the exact case in your two screenshots.
+                [...amountText.matchAll(
+                    /([\d,]+(?:\.\d{1,2})?)\s*\n\s*(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)\b/gi
+                )].forEach(m => pushAmount(m[1]));
+                
+                // --- 2d. EGP-tagged: EGP appears BEFORE the number ---
+                [...amountText.matchAll(
+                    /(?:EGP|EOP|ECP|EQP|FGP|E6P|ESP|EPG)\s*\n?\s*([\d,]+(?:\.\d{1,2})?)/gi
+                )].forEach(m => pushAmount(m[1]));
+                
+                // --- 2e. Arabic currency words ---
+                [...amountText.matchAll(/([\d,]+(?:\.\d{1,2})?)\s*(?:جنيه|ج\.?م|جم)\b/g)]
+                    .forEach(m => pushAmount(m[1]));
+                [...amountText.matchAll(/(?:جنيه|ج\.?م|جم)\s*([\d,]+(?:\.\d{1,2})?)/g)]
+                    .forEach(m => pushAmount(m[1]));
+                
+                // --- 2f. Labeled "Amount / Total / Paid" ---
+                [...amountText.matchAll(/(?:Amount|المبلغ|Total|Paid)[:\s]*([\d,]+(?:\.\d{1,2})?)/gi)]
+                    .forEach(m => pushAmount(m[1]));
+                
+                // Step 3: Choose the best candidate
                 const requestedAmount = parseFloat(activeReqToResolve.value.value);
                 if (foundAmounts.length > 0) {
-                    // Try exact match first
+                    // Prefer a candidate that exactly matches the requested value
                     const exactMatch = foundAmounts.find(a => Math.abs(a - requestedAmount) < 0.01);
-                    if (exactMatch !== undefined) {
-                        ocrAmount = exactMatch;
-                    } else {
-                        // Otherwise use the first/largest candidate
-                        // (largest is usually the transaction total, not fees/balance)
-                        ocrAmount = Math.max(...foundAmounts);
-                    }
+                    // Otherwise use the first (most reliable pattern matched first)
+                    ocrAmount = exactMatch !== undefined ? exactMatch : foundAmounts[0];
                 }
                 
-                // Step 4: Fallback — find any standalone number near currency-related words
+                // Step 4: Fallback — scan ALL numbers, but EXCLUDE long reference/account
+                // numbers. Reference numbers here are 10-16 digits; real amounts are short
+                // (we allow up to 7 digits → max 9,999,999 before decimals).
                 if (ocrAmount === 0) {
-                    // Find all numbers ≥ 1 in the text and pick one matching the requested amount
-                    const allNumbers = [...amountText.matchAll(/\b([\d,]+(?:\.\d+)?)\b/g)]
-                        .map(m => parseFloat(m[1].replace(/,/g, '')))
-                        .filter(n => !isNaN(n) && n > 0 && n < 10000000);
+                    const shortNumbers = [...amountText.matchAll(/\b([\d,]+(?:\.\d{1,2})?)\b/g)]
+                        .map(m => ({
+                            raw: m[1],
+                            val: parseFloat(m[1].replace(/,/g, '')),
+                            digitCount: m[1].replace(/[,\.]/g, '').length
+                        }))
+                        // Drop anything that's clearly a reference/account/phone number
+                        .filter(o => !isNaN(o.val) && o.val > 0 && o.val < 1000000 && o.digitCount <= 7)
+                        .map(o => o.val);
                     
-                    const exactMatch = allNumbers.find(a => Math.abs(a - requestedAmount) < 0.01);
+                    const exactMatch = shortNumbers.find(a => Math.abs(a - requestedAmount) < 0.01);
                     if (exactMatch !== undefined) {
                         ocrAmount = exactMatch;
+                    } else if (shortNumbers.length > 0) {
+                        // Last resort: pick the largest short number (usually the total,
+                        // not a fee or balance line)
+                        ocrAmount = Math.max(...shortNumbers);
                     }
                 }
                 
@@ -1618,7 +1638,7 @@ createApp({
                     }
                 }
                 
-                // Reference number (typically 12+ digits)
+                // Reference number (typically 10-16 digits)
                 const referenceMatch = text.match(/\b\d{10,16}\b/);
                 const ocrReference = referenceMatch ? referenceMatch[0] : 'N/A';
                 
